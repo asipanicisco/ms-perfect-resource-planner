@@ -1,241 +1,139 @@
-# MS Perfect Resources - Engineering Resource Management Tool
+# MS Perfect Resources - Engineer Resource Allocation Tool
 
-A comprehensive Streamlit-based application for managing engineering team resources, tracking monthly feature assignments, and visualizing engineer availability over time.
-
-## Table of Contents
-- [Overview](#overview)
-- [Features](#features)
-- [Installation](#installation)
-- [Usage Guide](#usage-guide)
-- [Key Calculations](#key-calculations)
-- [Data Persistence](#data-persistence)
-- [Excel Export](#excel-export)
-- [Troubleshooting](#troubleshooting)
-
-## Overview
-
-MS Perfect Resources is designed to help engineering managers and project coordinators:
-- Track engineer capacity and PTO days
-- Assign engineers to features on a monthly basis
-- Visualize utilization and availability trends
-- Plan future projects with resource requirements
-- Export comprehensive reports to Excel
+A Streamlit-based web application for managing engineer capacity, PTO (Paid Time Off), and monthly feature assignments. This tool helps teams track engineer availability and resource allocation across multiple months.
 
 ## Features
 
-### 1. **Engineer Management**
-- Add, edit, and manage engineer information
-- Track team assignments, roles, and weekly hours
-- Record annual PTO days for capacity planning
-- Rename columns for customization
-- Inline editing with AgGrid support (optional)
+### 👥 Engineer Management
+- **Add/Edit/Delete Engineers**: Manage your engineering team roster
+- **Quick Add Engineer**: Fast form-based engineer addition
+- **Auto-save**: Changes are automatically saved to CSV
+- **Data validation**: Automatic cleanup of empty rows and whitespace
 
-### 2. **Monthly Feature Assignments**
-- Assign engineers to specific features by month
-- Set allocation percentages for each assignment
-- Add notes for context
-- View assignments grouped by engineer
-- Easy deletion of assignments
+### 📅 Monthly PTO Management
+- **12-month PTO tracking**: Set PTO days for each engineer by month
+- **Annual PTO calculation**: Automatically sums monthly PTO values
+- **Quick actions**: Clear all PTO or apply the same value to all months
+- **Visual PTO entry**: Easy-to-use grid layout for monthly PTO entry
 
-### 3. **Engineer Utilization Timeline**
-The application provides a powerful dual-chart visualization:
+### 📊 Monthly Feature Assignments
+- **Flexible assignment creation**: Assign engineers to features by month with allocation percentages
+- **Multiple view modes**: View assignments by engineer, by month, or all at once
+- **Auto-save functionality**: Assignments are saved automatically
+- **Delete assignments**: Easy removal of incorrect assignments
 
-#### Top Chart: Utilization Trends
-- Shows each engineer's utilization percentage over time
-- Includes PTO-adjusted calculations
-- Visual thresholds at 95% (fully occupied) and 100% (over-allocated)
-- Interactive hover details showing assigned features
+### 📈 Engineer Utilization Summary
+- **Real-time utilization calculation**: See current and average monthly availability
+- **PTO-adjusted calculations**: Automatically accounts for PTO when calculating effective allocation
+- **Visual indicators**: Color-coded status (Available, Fully Occupied, Over-allocated)
+- **Detailed breakdowns**: Monthly availability and allocation percentages in pivot tables
+- **85% threshold**: Engineers are considered fully occupied at 85% allocation
 
-#### Bottom Chart: Available Capacity
-- Bar chart showing remaining capacity per engineer per month
-- Color-coded by month for easy comparison
-- Displays PTO impact on availability
+### 🚀 Future Projects Planning
+- **Project timeline visualization**: Gantt-style chart for future projects
+- **Priority tracking**: High/Medium/Low priority indicators
+- **Resource estimation**: Track estimated engineer count per project
 
-### 4. **Availability Analysis**
-- **Summary Table**: Shows current and average utilization
-- **Detailed Breakdown**: Monthly availability matrix with color coding
-- **Status Tracking**: Identifies when engineers become fully occupied
-
-### 5. **Future Projects Planning**
-- Track upcoming projects with timelines
-- Estimate required engineer count
-- Set priority levels and status
-- Visualize project timelines in Gantt-style chart
-
-### 6. **Excel Export**
-Generate comprehensive Excel files containing:
-- Engineer capacity data
-- Monthly assignments
-- Pivot tables for analysis
-- Future projects planning
-- All data formatted for easy reporting
+### 📥 Export Functionality
+- **Excel export**: Generate comprehensive Excel files with all data
+- **Multiple sheets**: Separate sheets for engineers, assignments, and projects
 
 ## Installation
 
-### Prerequisites
+1. **Clone the repository**
 ```bash
-pip install streamlit
-pip install pandas
-pip install xlsxwriter
-pip install plotly
-```
+git clone <your-repo-url>
+cd ms-perfect-resources
 
-### Optional (for enhanced editing)
-```bash
-pip install streamlit-aggrid
-```
+Create a virtual environment (recommended)
 
-### Running the Application
-```bash
-streamlit run resource_management.py
-```
+bashpython -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-## Usage Guide
+Install dependencies
 
-### Getting Started
+bashpip install streamlit pandas xlsxwriter plotly
 
-1. **Add Engineers**
-   - Click "➕ Add Engineer Row" 
-   - Fill in engineer details (Name, Team, Role, PTO Days)
-   - Click "💾 Save Engineer Changes"
+Optional: Install AgGrid for enhanced editing
 
-2. **Create Monthly Assignments**
-   - Select an engineer from the dropdown
-   - Enter the feature name
-   - Choose the month (YYYY-MM format)
-   - Set allocation percentage (0-100%)
-   - Add optional notes
-   - Click "➕ Add Monthly Assignment"
+bashpip install streamlit-aggrid
+Usage
 
-3. **View Utilization**
-   - The timeline chart automatically updates
-   - Check the availability summary table
-   - Expand "Detailed Monthly Availability Breakdown" for matrices
+Start the application
 
-### Understanding the Charts
+bashstreamlit run resource_allocation_app.py
 
-#### Utilization Chart (Top)
-- **Line Plot**: Shows utilization trends for each engineer
-- **Red Dashed Line**: 100% capacity (over-allocated)
-- **Orange Dashed Line**: 95% capacity (fully occupied)
-- **Hover Details**: Shows features assigned and working days
+Access the application
+Open your browser and navigate to http://localhost:8501
 
-#### Availability Chart (Bottom)
-- **Bar Chart**: Remaining capacity by engineer and month
-- **Colors**: Different colors represent different months
-- **Values**: Percentage of available capacity
+Application Workflow
+Getting Started
 
-### Color Coding
+Add Engineers: Use the "➕ Quick Add Engineer" form to add team members
+Set PTO: Navigate to "Monthly PTO Management" tab to set time off
+Create Assignments: Add monthly assignments with allocation percentages
+Review Utilization: Check the Engineer Utilization Summary for availability
 
-#### Availability Colors
-- 🟢 **Green**: Good availability (>20%)
-- 🟡 **Yellow**: Low availability (1-20%)
-- 🔴 **Red**: No availability (0%) or over-allocated
+Key Concepts
 
-#### Status Colors
-- 🟢 **Green**: Engineer has availability
-- 🟡 **Yellow**: Engineer is fully occupied
-- 🔴 **Red**: Engineer is over-allocated
+Allocation %: Percentage of an engineer's time allocated to a feature
+Effective Allocation: Allocation adjusted for PTO days
+Working Days: Standard 22 working days per month minus PTO
+Availability Threshold: 85% - engineers are considered fully occupied above this
 
-## Key Calculations
+Tips for Best Use
 
-### PTO Distribution
-- Annual PTO days are distributed evenly across 12 months
-- Monthly PTO = Annual PTO ÷ 12
-- Assumes 22 working days per month
+Name Consistency: Ensure engineer names match exactly between sections
+PTO Entry: Enter PTO before creating assignments for accurate calculations
+Fix PTO Button: Use if utilization isn't calculating correctly
+Refresh Button: Force reload data if updates aren't showing
 
-### Effective Allocation
-```
-Working Days Ratio = (22 - Monthly PTO Days) / 22
-Effective Allocation = Total Assignment % × Working Days Ratio
-Available Capacity = 100% - Effective Allocation
-```
+Data Storage
+The application uses CSV files for data persistence:
 
-### Example
-- Engineer has 24 annual PTO days
-- Monthly PTO = 24 ÷ 12 = 2 days
-- Working days = 22 - 2 = 20 days
-- Working ratio = 20/22 = 90.9%
-- If assigned 80% to a feature:
-  - Effective allocation = 80% × 90.9% = 72.7%
-  - Available capacity = 100% - 72.7% = 27.3%
+engineers.csv: Engineer roster and PTO data
+monthly_assignments.csv: Feature assignments by month
+future_projects.csv: Future project planning data
 
-### Thresholds
-- **95%**: Considered "Fully Occupied" (5% buffer for meetings, etc.)
-- **100%**: Over-allocated threshold
+Troubleshooting
+Utilization showing 100% availability despite assignments
 
-## Data Persistence
+Click the "🔧 Fix PTO" button to ensure PTO columns exist for assignment months
+Check that engineer names match exactly (no extra spaces)
+Use the "🔄 Refresh" button to reload data
 
-The application saves data to CSV files:
-- `engineers.csv`: Engineer information
-- `monthly_assignments.csv`: Feature assignments
-- `future_projects.csv`: Future project data
+Data not saving
 
-Data is automatically saved when you click the respective save buttons.
+The application auto-saves on most actions
+Use the manual "💾 Save" buttons as backup
+Check file permissions in the application directory
 
-## Excel Export
+Adding rows causes data loss
 
-The exported Excel file includes:
-1. **Engineer Capacity**: All engineer data with PTO days
-2. **Monthly Assignments**: Detailed assignment list
-3. **Monthly Assignment Matrix**: Pivot table view
-4. **Future Projects**: Project planning data
+Use the "➕ Quick Add Engineer" form instead of inline table editing
+This is a known Streamlit limitation with dynamic row addition
 
-### Using the Excel Export
-1. Click "Generate Excel File with All Data"
-2. Click "📥 Download Excel File"
-3. Open in Excel for further analysis
-4. Use pivot tables for custom reports
+Color Coding
+Availability Colors
 
-## Troubleshooting
+🟢 Green: Good availability (>20%)
+🟡 Yellow: Low availability (1-20%)
+🔴 Red: No availability (0%)
 
-### Common Issues
+Status Indicators
 
-1. **"No engineers found" message**
-   - Add at least one engineer in the Engineer Management section
-   - Save the engineer data
+Available: Under 85% allocation
+Fully Occupied: 85-100% allocation
+Over-allocated: Above 100% allocation
 
-2. **Charts not updating**
-   - Ensure you've saved your changes
-   - Check that allocation percentages are numeric
-   - Refresh the page if needed
+Known Limitations
 
-3. **AgGrid not working**
-   - Install with: `pip install streamlit-aggrid`
-   - The app will fall back to standard editors if not installed
+Dynamic row editing: Adding rows directly in tables may cause issues
+Browser storage: localStorage/sessionStorage not supported in artifacts
+Excel formulas: Export includes data only, no formulas
 
-4. **Excel export failing**
-   - Check for invalid data (non-numeric allocations)
-   - Ensure all required fields are filled
-   - Try saving all sections before exporting
-
-### Best Practices
-
-1. **Regular Saves**: Save data in each section regularly
-2. **PTO Planning**: Update PTO days at the start of the year
-3. **Monthly Reviews**: Review and update assignments monthly
-4. **Allocation Limits**: Aim to keep engineers below 95% allocation
-5. **Buffer Time**: Leave 5-10% capacity for unexpected work
-
-## Advanced Features
-
-### Custom Column Names
-- Use the "Rename Columns" expanders to customize field names
-- Changes are saved to maintain consistency
-
-### Bulk Operations
-- Export to Excel for bulk updates
-- Import updated CSV files by replacing the saved files
-
-### Integration Ideas
-- Connect to HR systems for automatic PTO updates
-- Integrate with project management tools
-- Set up automated reports via scheduled runs
-
-## Support
-
-For issues or feature requests, please contact your IT administrator or the development team.
-To run the tool use: nohup streamlit run resource_allocation_app.py --server.port 8000 > streamlit.log 2>&1 &
----
-
-*MS Perfect Resources - Making resource management perfect for your team*
+Support
+For issues or feature requests, please contact your team administrator or submit a ticket through your internal support system.
+Version
+Current Version: 1.0.0
+Last Updated: December 2024
