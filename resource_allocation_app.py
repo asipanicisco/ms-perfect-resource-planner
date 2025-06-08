@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import xlsxwriter
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import calendar
 
 # ─────────────────────────────────────────────────────────────
 # Streamlit Page Configuration
@@ -38,257 +40,287 @@ def default_future_projects():
         "Status": ["Planning", "On Hold"],
         "Notes": ["Customer-facing feature", "Internal tooling"]
     })
-    n = len(engineer_list)
+
+def default_monthly_assignments():
+    """Default monthly assignments structure"""
+    current_date = datetime.now()
+    months = []
+    for i in range(6):  # Default to 6 months ahead
+        month_date = current_date + timedelta(days=30*i)
+        months.append(month_date.strftime("%Y-%m"))
+    
     return pd.DataFrame({
-        "Team": ["Team A", "Team B"] if n >= 2 else ["Team A"] * n,
-        "Engineer Name": engineer_list,
-        "PTO Days": [0 for _ in range(n)],
-        "Project Alpha Allocation": [50, 30] if n >= 2 else [50] * n,
-        "Project Beta Allocation": [30, 40] if n >= 2 else [30] * n,
-        "Notes": ["" for _ in range(n)]
+        "Engineer Name": [],
+        "Feature": [],
+        "Month": [],
+        "Allocation %": [],
+        "Notes": []
     })
 
 # ─────────────────────────────────────────────────────────────
-# 2) Generate Program Allocation Chart Preview
+# 2) Monthly Assignment Functions
 # ─────────────────────────────────────────────────────────────
-
-def generate_allocation_chart_preview(programs_df):
-    """Generate a stacked bar chart showing program allocation by engineer (PTO-adjusted)"""
+    """Generate a chart showing engineer utilization and availability over time"""
     
-    # Make a copy for processing
-    df_copy = programs_df.copy()
+    # Get all engineers
+    all_engineers = engineers_df['Engineer Name'].tolist()
     
-    # Find allocation columns
-    alloc_cols = [col for col in df_copy.columns if col.endswith('% Allocated') or col.endswith('Allocation')]
+    # Generate default months if no data
+    if monthly_df.empty:
+        current_date = datetime.now()
+        months = []
+        for i in range(6):  # Default to 6 months
+            month_date = current_date + timedelta(days=30*i)
+            months.append(month_date.strftime("%Y-%m"))
+    else:
+        months = sorted(monthly_df['Month'].unique())
     
-    if not alloc_cols or len(df_copy) == 0:
-        return None, None
+    # Create utilization data
+    utilization_data = []
+    availability_details = []
     
-    # Calculate adjusted allocations for each program
-    chart_data = {}
-    engineers = df_copy.get('Engineer Name', []).tolist()
-    
-    for col in alloc_cols:
-        program_name = col.replace(' % Allocated', '').replace(' Allocation', '')
-        adjusted_values = []
+    for month in months:
+        month_data = monthly_df[monthly_df['Month'] == month] if not monthly_df.empty else pd.DataFrame()
         
-        for idx, val in enumerate(df_copy.get(col, [])):
-            try:
-                # Handle different input formats
-                val_str = str(val).replace('%', '').strip()
-                if val_str and val_str != 'nan' and val_str != '':
-                    percent = float(val_str)
-                    pto = float(df_copy.get('PTO Days', [0] * len(df_copy))[idx])
-                    # Adjust for PTO: effective allocation = percent * ((30 - pto_days) / 30)
-                    effective = percent * ((30 - pto) / 30) if pto < 30 else 0
-                    adjusted_values.append(max(0, effective))
-                else:
-                    adjusted_values.append(0.0)
-            except (ValueError, TypeError):
-                adjusted_values.append(0.0)
-        
-        chart_data[program_name] = adjusted_values
+        for engineer in all_engineers:
+            engineer_month_data = month_data[month_data['Engineer Name'] == engineer] if not month_data.empty else pd.DataFrame()
+            
+            # Calculate total allocation for this engineer in this month
+            total_allocation = 0
+            features = []
+            feature_allocations = {}
+            
+            for _, row in engineer_month_data.iterrows():
+                try:
+                    allocation = float(str(row['Allocation %']).replace('%', '').strip())
+                    total_allocation += allocation
+                    feature_name = row['Feature']
+                    features.append(f"{feature_name} ({allocation}%)")
+                    feature_allocations[feature_name] = allocation
+                except:
+                    pass
+            
+            # Get PTO days for this engineer
+            pto_days = 0
+            working_days_in_month = 22  # Typical working days in a month
+            if engineer in engineers_df['Engineer Name'].values:
+                pto_row = engineers_df[engineers_df['Engineer Name'] == engineer]
+                if not pto_row.empty:
+                    pto_days = float(pto_row.iloc[0].get('PTO Days', 0))
+            
+            # Calculate PTO days for this specific month (distribute annual PTO across months)
+            monthly_pto_days = pto_days / 12  # Assume PTO is annual, distribute evenly
+            effective_working_days = max(0, working_days_in_month - monthly_pto_days)
+            working_days_ratio = effective_working_days / working_days_in_month
+            
+            # Calculate effective allocation and availability
+            effective_allocation = total_allocation * working_days_ratio
+            available_capacity = max(0, 100 - effective_allocation)
+            
+            utilization_data.append({
+                'Engineer': engineer,
+                'Month': month,
+                'Total Allocation': total_allocation,
+                'Effective Allocation': effective_allocation,
+                'Available Capacity': available_capacity,
+                'PTO Impact': (1 - working_days_ratio) * 100,
+                'Features': ', '.join(features) if features else 'None',
+                'Working Days': effective_working_days,
+                'Status': 'Over-allocated' if effective_allocation > 100 else 
+                         'Fully Occupied' if effective_allocation >= 95 else
+                         'Available'
+            })
+            
+            # Store detailed availability data
+            availability_details.append({
+                'Engineer': engineer,
+                'Month': month,
+                'Features': feature_allocations,
+                'Total Allocation %': total_allocation,
+                'Effective Allocation %': round(effective_allocation, 1),
+                'Available %': round(available_capacity, 1),
+                'PTO Days (Monthly)': round(monthly_pto_days, 1),
+                'Working Days': round(effective_working_days, 1)
+            })
     
-    # Calculate effective total utilization
-    total_utilization = []
-    for idx in range(len(engineers)):
-        total = sum(chart_data[program][idx] for program in chart_data.keys())
-        total_utilization.append(round(total, 2))
+    utilization_df = pd.DataFrame(utilization_data)
+    availability_df = pd.DataFrame(availability_details)
     
-    # Create stacked bar chart using plotly
-    fig = go.Figure()
-    
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-    
-    for i, (program, values) in enumerate(chart_data.items()):
-        if any(v > 0 for v in values):  # Only add if there's actual data
-            fig.add_trace(go.Bar(
-                name=program,
-                x=engineers,
-                y=values,
-                marker_color=colors[i % len(colors)]
-            ))
-    
-    fig.update_layout(
-        title='Engineer Allocation by Program (PTO-Adjusted)',
-        xaxis_title='Engineer',
-        yaxis_title='Allocation (%)',
-        barmode='stack',
-        legend=dict(orientation="h", yanchor="top", y=-0.1),
-        height=500
+    # Create the visualization with subplots
+    fig = make_subplots(
+        rows=2, cols=1,
+        subplot_titles=('Engineer Utilization Over Time', 'Engineer Availability Over Time'),
+        vertical_spacing=0.15,
+        row_heights=[0.5, 0.5]
     )
     
-    # Create utilization summary DataFrame
-    utilization_df = pd.DataFrame({
-        'Engineer': engineers,
-        'Team': df_copy.get('Team', ['']*len(engineers)),
-        'PTO Days': df_copy.get('PTO Days', [0]*len(engineers)),
-        'Effective Total %': total_utilization
-    })
+    # Plot 1: Utilization (Stacked Area Chart)
+    for engineer in all_engineers:
+        engineer_data = utilization_df[utilization_df['Engineer'] == engineer]
+        
+        # Add utilization trace
+        fig.add_trace(go.Scatter(
+            x=engineer_data['Month'],
+            y=engineer_data['Effective Allocation'],
+            mode='lines+markers',
+            name=f"{engineer} - Utilized",
+            line=dict(width=2),
+            marker=dict(size=8),
+            legendgroup=engineer,
+            showlegend=True,
+            hovertemplate='<b>%{fullData.name}</b><br>' +
+                          'Month: %{x}<br>' +
+                          'Utilization: %{y:.1f}%<br>' +
+                          'Features: %{text}<br>' +
+                          'Working Days: %{customdata:.1f}<br>' +
+                          '<extra></extra>',
+            text=engineer_data['Features'],
+            customdata=engineer_data['Working Days']
+        ), row=1, col=1)
     
-    return fig, utilization_df
+    # Plot 2: Availability (Bar Chart)
+    # Group by month for better visualization
+    for i, month in enumerate(months):
+        month_data = utilization_df[utilization_df['Month'] == month]
+        
+        fig.add_trace(go.Bar(
+            x=month_data['Engineer'],
+            y=month_data['Available Capacity'],
+            name=month,
+            text=[f"{val:.0f}%" for val in month_data['Available Capacity']],
+            textposition='auto',
+            hovertemplate='<b>%{x}</b><br>' +
+                          'Month: ' + month + '<br>' +
+                          'Available: %{y:.1f}%<br>' +
+                          'Allocated: %{customdata[0]:.1f}%<br>' +
+                          'PTO Impact: %{customdata[1]:.1f}%<br>' +
+                          '<extra></extra>',
+            customdata=month_data[['Effective Allocation', 'PTO Impact']].values,
+            marker_color=px.colors.qualitative.Set3[i % len(px.colors.qualitative.Set3)]
+        ), row=2, col=1)
+    
+    # Add reference lines to utilization plot
+    fig.add_hline(y=100, line_dash="dash", line_color="red", 
+                  annotation_text="Over-allocated", row=1, col=1)
+    fig.add_hline(y=95, line_dash="dash", line_color="orange", 
+                  annotation_text="Fully Occupied", row=1, col=1)
+    
+    # Update layout
+    fig.update_xaxes(title_text="Month", row=1, col=1)
+    fig.update_xaxes(title_text="Engineer", row=2, col=1)
+    fig.update_yaxes(title_text="Utilization (%)", row=1, col=1, range=[0, max(120, utilization_df['Effective Allocation'].max() + 10)])
+    fig.update_yaxes(title_text="Available Capacity (%)", row=2, col=1, range=[0, 105])
+    
+    fig.update_layout(
+        height=800,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.45,
+            xanchor="left",
+            x=1.02
+        ),
+        title_text="Engineer Resource Utilization and Availability Analysis"
+    )
+    
+    # Create detailed availability summary
+    availability_summary = []
+    for engineer in all_engineers:
+        engineer_data = utilization_df[utilization_df['Engineer'] == engineer]
+        
+        if not engineer_data.empty:
+            # Current month data
+            current_data = engineer_data.iloc[0]
+            
+            # Find first month where engineer becomes fully occupied
+            fully_occupied = engineer_data[engineer_data['Effective Allocation'] >= 95]
+            if not fully_occupied.empty:
+                first_full_month = fully_occupied.iloc[0]['Month']
+                status = f"Fully occupied from {first_full_month}"
+            else:
+                status = "Has availability"
+            
+            # Find over-allocated months
+            over_allocated = engineer_data[engineer_data['Effective Allocation'] > 100]
+            if not over_allocated.empty:
+                over_months = ', '.join(over_allocated['Month'].tolist())
+                status += f" | Over-allocated in: {over_months}"
+            
+            # Average availability across all months
+            avg_availability = engineer_data['Available Capacity'].mean()
+            
+            availability_summary.append({
+                'Engineer': engineer,
+                'Current Utilization': f"{current_data['Effective Allocation']:.1f}%",
+                'Current Availability': f"{current_data['Available Capacity']:.1f}%",
+                'Avg. Monthly Availability': f"{avg_availability:.1f}%",
+                'Annual PTO Days': engineers_df[engineers_df['Engineer Name'] == engineer]['PTO Days'].iloc[0] if engineer in engineers_df['Engineer Name'].values else 0,
+                'Status': status
+            })
+        else:
+            availability_summary.append({
+                'Engineer': engineer,
+                'Current Utilization': "0%",
+                'Current Availability': "100%",
+                'Avg. Monthly Availability': "100%",
+                'Annual PTO Days': engineers_df[engineers_df['Engineer Name'] == engineer]['PTO Days'].iloc[0] if engineer in engineers_df['Engineer Name'].values else 0,
+                'Status': "Fully available"
+            })
+    
+    summary_df = pd.DataFrame(availability_summary)
+    
+    return fig, summary_df, availability_df
+
+def create_monthly_assignment_matrix(engineers_df, features, num_months=6):
+    """Create a matrix view for monthly assignments"""
+    current_date = datetime.now()
+    months = []
+    
+    for i in range(num_months):
+        month_date = current_date + timedelta(days=30*i)
+        months.append(month_date.strftime("%Y-%m"))
+    
+    # Create a matrix dataframe
+    matrix_data = []
+    
+    for engineer in engineers_df['Engineer Name']:
+        for feature in features:
+            row = {'Engineer': engineer, 'Feature': feature}
+            for month in months:
+                row[month] = 0  # Default allocation
+            matrix_data.append(row)
+    
+    return pd.DataFrame(matrix_data), months
 
 # ─────────────────────────────────────────────────────────────
-# 3) Generate Excel File with Charts (Including PTO Adjustments)
+# 3) Generate Excel File with Charts (Including Monthly Assignments)
 # ─────────────────────────────────────────────────────────────
 
-def generate_excel(engineers_df, programs_df):
+def generate_excel(engineers_df, monthly_df=None):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         # Write data to separate sheets
         engineers_df.to_excel(writer, sheet_name='Engineer Capacity', index=False)
-        programs_df.to_excel(writer, sheet_name='Program Allocation', index=False)
         
         # Add future projects sheet if it exists in session state
         if 'future_projects_df' in st.session_state and not st.session_state.future_projects_df.empty:
             st.session_state.future_projects_df.to_excel(writer, sheet_name='Future Projects', index=False)
+        
+        # Add monthly assignments sheet
+        if monthly_df is not None and not monthly_df.empty:
+            monthly_df.to_excel(writer, sheet_name='Monthly Assignments', index=False)
+            
+            # Create pivot table for monthly assignments
+            pivot_df = monthly_df.pivot_table(
+                index=['Engineer Name', 'Feature'],
+                columns='Month',
+                values='Allocation %',
+                fill_value=0
+            )
+            pivot_df.to_excel(writer, sheet_name='Monthly Assignment Matrix')
 
         workbook = writer.book
-        worksheet_program = writer.sheets['Program Allocation']
-        
-        # Make a copy of the DataFrame for processing
-        df_copy = programs_df.copy()
-        
-        # Dynamically detect all allocation columns (both '% Allocated' and 'Allocation' patterns)
-        alloc_cols = [col for col in df_copy.columns if col.endswith('% Allocated') or col.endswith('Allocation')]
-        
-        # Only create chart if we have allocation columns and data
-        if alloc_cols and len(df_copy) > 0:
-            chart = workbook.add_chart({'type': 'column', 'subtype': 'stacked'})
-            
-            # Assign a color palette
-            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-            
-            series_added = False
-            
-            for i, col in enumerate(alloc_cols):
-                color = colors[i % len(colors)]
-                adjusted_values = []
-                valid_data = False
-                
-                for idx, val in enumerate(df_copy.get(col, [])):
-                    try:
-                        # Handle different input formats
-                        val_str = str(val).replace('%', '').strip()
-                        if val_str and val_str != 'nan' and val_str != '':
-                            percent = float(val_str)
-                            pto = float(df_copy.get('PTO Days', [0] * len(df_copy))[idx])
-                            effective = percent * ((30 - pto) / 30) if pto < 30 else 0
-                            adjusted_values.append(max(0, effective))
-                            if effective > 0:
-                                valid_data = True
-                        else:
-                            adjusted_values.append(0.0)
-                    except (ValueError, TypeError):
-                        adjusted_values.append(0.0)
-                
-                # Only add series if there's valid data
-                if valid_data:
-                    temp_col = f"Adjusted_{col.replace(' ', '_').replace('%', 'Pct')}"
-                    df_copy[temp_col] = pd.Series(adjusted_values)
-                    
-                    # Write the adjusted values to the worksheet for the chart
-                    col_idx = len(df_copy.columns) - 1
-                    for row_idx, val in enumerate(adjusted_values):
-                        worksheet_program.write(row_idx + 1, col_idx, val)
-                    
-                    # Add series to chart
-                    chart.add_series({
-                        'name': col.replace(' % Allocated', '').replace(' Allocation', ''),
-                        'categories': ['Program Allocation', 1, 0, len(df_copy), 0],
-                        'values': ['Program Allocation', 1, col_idx, len(df_copy), col_idx],
-                        'fill': {'color': color},
-                    })
-                    series_added = True
-            
-            # Only insert chart if we added at least one series
-            if series_added:
-                chart.set_title({'name': 'Engineer Allocation by Program (adjusted for PTO)'})
-                chart.set_x_axis({'name': 'Engineer'})
-                chart.set_y_axis({'name': 'Allocation (%)'})
-                chart.set_legend({'position': 'bottom'})
-                worksheet_program.insert_chart('L2', chart)
-
-        # Calculate Effective Total %
-        total_utilization = []
-        for idx in range(len(df_copy)):
-            try:
-                total = 0.0
-                for col_name in df_copy.columns:
-                    if col_name.startswith('Adjusted_'):
-                        total += df_copy[col_name].iloc[idx]
-                total_utilization.append(round(total, 2))
-            except:
-                total_utilization.append(0.0)
-        
-        # Add Effective Total % column
-        df_copy['Effective Total %'] = total_utilization
-        
-        # Write the Effective Total % to the worksheet
-        if 'Effective Total %' in df_copy.columns:
-            et_col_idx = len(programs_df.columns)  # Position after original columns
-            worksheet_program.write(0, et_col_idx, 'Effective Total %')
-            for row_idx, val in enumerate(total_utilization):
-                worksheet_program.write(row_idx + 1, et_col_idx, val)
-            
-            # Heatmap formatting for Effective Total %
-            red_fmt = workbook.add_format({'bg_color': '#FF9999'})
-            yellow_fmt = workbook.add_format({'bg_color': '#FFEB99'})
-            green_fmt = workbook.add_format({'bg_color': '#CCFFCC'})
-            
-            worksheet_program.conditional_format(1, et_col_idx, len(df_copy), et_col_idx, {
-                'type': 'cell',
-                'criteria': '>=',
-                'value': 100,
-                'format': red_fmt
-            })
-            worksheet_program.conditional_format(1, et_col_idx, len(df_copy), et_col_idx, {
-                'type': 'cell',
-                'criteria': 'between',
-                'minimum': 80,
-                'maximum': 99.99,
-                'format': yellow_fmt
-            })
-            worksheet_program.conditional_format(1, et_col_idx, len(df_copy), et_col_idx, {
-                'type': 'cell',
-                'criteria': '<',
-                'value': 80,
-                'format': green_fmt
-            })
-
-        # Build Gantt sheet
-        gantt_sheet = workbook.add_worksheet("Program Timeline")
-        gantt_sheet.write_row("A1", ["Engineer Name", "Team", "Program", "Start Date", "End Date"])
-        row_idx = 1
-        
-        for _, row_data in df_copy.iterrows():
-            engineer = row_data.get("Engineer Name", "")
-            team = row_data.get("Team", "")
-            
-            for col in alloc_cols:
-                try:
-                    val_str = str(row_data.get(col, "")).replace('%', '').strip()
-                    if val_str and val_str != 'nan' and val_str != '' and float(val_str) > 0:
-                        program = col.replace(' % Allocated', '').replace(' Allocation', '')
-                        end_date = row_data.get(f"{program} End Date", "")
-                        
-                        if not end_date or pd.isna(end_date):
-                            # Default to 30 days from today if no end date
-                            end_dt = datetime.today() + pd.Timedelta(days=30)
-                        else:
-                            try:
-                                end_dt = datetime.strptime(str(end_date), "%Y-%m-%d")
-                            except:
-                                end_dt = datetime.today() + pd.Timedelta(days=30)
-                        
-                        start_dt = end_dt - pd.Timedelta(days=30)
-                        gantt_sheet.write_row(row_idx, 0, [
-                            engineer, team, program,
-                            start_dt.date().isoformat(), end_dt.date().isoformat()
-                        ])
-                        row_idx += 1
-                except (ValueError, TypeError):
-                    continue
     
     output.seek(0)
     return output
@@ -350,47 +382,13 @@ def generate_future_projects_timeline(future_projects_df):
     
     return fig
 
-def generate_gantt_dataframe(programs_df):
-    gantt_data = []
-    today = datetime.today()
-    fixed_cols = {"Team", "Engineer Name", "PTO Days", "Notes"}
-    
-    # Find allocation columns (both patterns)
-    alloc_cols = [col for col in programs_df.columns if col.endswith('% Allocated') or col.endswith('Allocation')]
-    
-    for _, row_data in programs_df.iterrows():
-        engineer = row_data.get("Engineer Name", "")
-        team = row_data.get("Team", "")
-        
-        for col in alloc_cols:
-            try:
-                percent_str = str(row_data.get(col, "")).replace('%', '').strip()
-                if percent_str and percent_str != 'nan' and percent_str != '':
-                    percent = float(percent_str)
-                    if percent > 0:
-                        program = col.replace(' % Allocated', '').replace(' Allocation', '')
-                        end_dt = today + pd.Timedelta(days=30)
-                        start_dt = end_dt - pd.Timedelta(days=30)
-                        gantt_data.append({
-                            "Engineer": engineer,
-                            "Team": team,
-                            "Program": program,
-                            "Start": start_dt,
-                            "Finish": end_dt,
-                            "Allocation": percent
-                        })
-            except (ValueError, TypeError):
-                continue
-    
-    return pd.DataFrame(gantt_data)
-
 # ─────────────────────────────────────────────────────────────
-# 6) Main App Logic
+# 5) Main App Logic
 # ─────────────────────────────────────────────────────────────
 
 engineer_file = "engineers.csv"
-program_file = "programs.csv"
 future_projects_file = "future_projects.csv"
+monthly_assignments_file = "monthly_assignments.csv"
 
 # Initialize Engineers DataFrame
 if "engineers_df" not in st.session_state:
@@ -459,83 +457,227 @@ if st.button("💾 Save Engineer Changes", key="save_eng_btn"):
     engineers_df.to_csv(engineer_file, index=False)
     st.success("Engineer data saved!")
 
-st.header("📊 Program Allocation")
+# ─────────────────────────────────────────────────────────────
+# NEW SECTION: Monthly Feature Assignments
+# ─────────────────────────────────────────────────────────────
 
-# Initialize Programs DataFrame
-if "programs_df" not in st.session_state:
+st.header("📅 Monthly Feature Assignments")
+
+# Initialize Monthly Assignments DataFrame
+if "monthly_assignments_df" not in st.session_state:
     try:
-        programs_df = pd.read_csv(program_file)
+        st.session_state.monthly_assignments_df = pd.read_csv(monthly_assignments_file)
     except FileNotFoundError:
-        engineer_list = st.session_state.engineers_df.get("Engineer Name", []).tolist()
-        programs_df = default_programs(engineer_list)
-    st.session_state.programs_df = programs_df
+        st.session_state.monthly_assignments_df = default_monthly_assignments()
 
-programs_df = st.session_state.programs_df
+monthly_df = st.session_state.monthly_assignments_df
 
-if st.button("➕ Add Program Row", key="add_prog_row"):
-    new_prog_row = {col: "" if not (col.endswith('Allocation') or col.endswith('% Allocated')) and col != "PTO Days" else 0 for col in programs_df.columns}
-    programs_df = pd.concat([programs_df, pd.DataFrame([new_prog_row])], ignore_index=True)
-    st.session_state.programs_df = programs_df
+# UI for adding monthly assignments
+col1, col2, col3 = st.columns(3)
 
-# Expander to rename program columns
-with st.expander("Rename Program Columns", expanded=False):
-    prog_renames = {}
-    for col in programs_df.columns:
-        new_col = st.text_input(f"Rename '{col}' to:", value=col, key=f"rename_prog_{col}")
-        prog_renames[col] = new_col
-    if st.button("Apply Program Renames", key="apply_prog_renames"):
-        programs_df = programs_df.rename(columns=prog_renames)
-        st.session_state.programs_df = programs_df
-        # Save the renamed dataframe to CSV to persist changes
-        programs_df.to_csv(program_file, index=False)
-        st.success("Program column names updated and saved!")
+with col1:
+    engineer_list = engineers_df['Engineer Name'].tolist()
+    selected_engineer = st.selectbox("Select Engineer", options=engineer_list, key="monthly_engineer")
 
-# Expander for modifying columns
-with st.expander("Modify Program Columns", expanded=False):
-    cols = programs_df.columns.tolist()
-    col_to_delete = st.selectbox("Select column to delete:", options=cols, key="delete_prog_col")
-    if st.button("Delete Column", key="del_prog_col_btn"):
-        if col_to_delete in programs_df.columns:
-            programs_df.drop(columns=[col_to_delete], inplace=True)
-            st.session_state.programs_df = programs_df
-            # Save changes to CSV to persist
-            programs_df.to_csv(program_file, index=False)
-            st.success(f"Deleted column '{col_to_delete}' and saved changes")
+with col2:
+    feature_name = st.text_input("Feature Name", key="monthly_feature")
+
+with col3:
+    # Generate month options
+    current_date = datetime.now()
+    month_options = []
+    for i in range(12):  # Next 12 months
+        month_date = current_date + timedelta(days=30*i)
+        month_options.append(month_date.strftime("%Y-%m"))
+    selected_month = st.selectbox("Month", options=month_options, key="monthly_month")
+
+col4, col5 = st.columns(2)
+with col4:
+    allocation_percent = st.number_input("Allocation %", min_value=0, max_value=100, value=0, key="monthly_allocation")
+with col5:
+    notes = st.text_input("Notes", key="monthly_notes")
+
+if st.button("➕ Add Monthly Assignment", key="add_monthly_assignment"):
+    if selected_engineer and feature_name and allocation_percent > 0:
+        new_assignment = {
+            "Engineer Name": selected_engineer,
+            "Feature": feature_name,
+            "Month": selected_month,
+            "Allocation %": allocation_percent,
+            "Notes": notes
+        }
+        monthly_df = pd.concat([monthly_df, pd.DataFrame([new_assignment])], ignore_index=True)
+        st.session_state.monthly_assignments_df = monthly_df
+        st.success(f"Added assignment: {selected_engineer} -> {feature_name} ({allocation_percent}%) for {selected_month}")
+    else:
+        st.error("Please fill in all required fields")
+
+# Display current monthly assignments
+if not monthly_df.empty:
+    st.subheader("Current Monthly Assignments")
     
-    new_col_name = st.text_input("New column name:", key="new_prog_col_name")
-    if st.button("Add Column", key="add_prog_col_btn"):
-        if new_col_name and new_col_name not in programs_df.columns:
-            programs_df[new_col_name] = ""
-            st.session_state.programs_df = programs_df
-            # Save changes to CSV to persist
-            programs_df.to_csv(program_file, index=False)
-            st.success(f"Added column '{new_col_name}' and saved changes")
-        else:
-            st.error("Invalid or duplicate column name.")
+    # Group by engineer for better visualization
+    engineers_in_monthly = monthly_df['Engineer Name'].unique()
+    
+    for engineer in engineers_in_monthly:
+        with st.expander(f"📋 {engineer}'s Assignments"):
+            engineer_assignments = monthly_df[monthly_df['Engineer Name'] == engineer].sort_values('Month')
+            
+            if aggrid_available:
+                gb_monthly = GridOptionsBuilder.from_dataframe(engineer_assignments)
+                gb_monthly.configure_default_column(editable=True)
+                monthly_response = AgGrid(
+                    engineer_assignments,
+                    gridOptions=gb_monthly.build(),
+                    allow_unsafe_jscode=True,
+                    enable_enterprise_modules=False,
+                    fit_columns_on_grid_load=True,
+                    update_mode='VALUE_CHANGED',
+                    key=f'monthly_grid_{engineer}'
+                )
+                # Update the main dataframe with changes
+                updated_data = pd.DataFrame(monthly_response['data'])
+                monthly_df.loc[monthly_df['Engineer Name'] == engineer] = updated_data
+            else:
+                st.dataframe(engineer_assignments)
+    
+    # Option to delete assignments
+    st.subheader("Delete Assignments")
+    if len(monthly_df) > 0:
+        # Create a more user-friendly way to select assignments to delete
+        delete_options = []
+        for idx, row in monthly_df.iterrows():
+            delete_options.append(f"{idx}: {row['Engineer Name']} - {row['Feature']} ({row['Month']}, {row['Allocation %']}%)")
+        
+        selected_to_delete = st.selectbox("Select assignment to delete:", options=delete_options, key="delete_monthly_select")
+        
+        if st.button("🗑️ Delete Selected Assignment", key="delete_monthly_btn"):
+            # Extract index from the selected option
+            delete_idx = int(selected_to_delete.split(":")[0])
+            monthly_df = monthly_df.drop(index=delete_idx).reset_index(drop=True)
+            st.session_state.monthly_assignments_df = monthly_df
+            st.success("Assignment deleted!")
+            st.rerun()  # Refresh the page to update the display
 
-if aggrid_available:
-    # Build grid options for programs
-    gb_prog = GridOptionsBuilder.from_dataframe(programs_df)
-    gb_prog.configure_default_column(editable=True)
-    prog_response = AgGrid(
-        programs_df,
-        gridOptions=gb_prog.build(),
-        allow_unsafe_jscode=True,
-        enable_enterprise_modules=False,
-        fit_columns_on_grid_load=True,
-        update_mode='VALUE_CHANGED',
-        key='prog_grid'
-    )
-    programs_df = pd.DataFrame(prog_response['data'])
-    st.session_state.programs_df = programs_df
+if st.button("💾 Save Monthly Assignments", key="save_monthly_btn"):
+    monthly_df.to_csv(monthly_assignments_file, index=False)
+    st.success("Monthly assignments saved!")
+
+# ─────────────────────────────────────────────────────────────
+# Monthly Utilization Timeline Chart
+# ─────────────────────────────────────────────────────────────
+
+st.header("📊 Engineer Utilization Timeline")
+
+# First check if we have any engineers
+if engineers_df.empty:
+    st.warning("No engineers found. Please add engineers in the Engineer Management section first.")
+elif not monthly_df.empty or st.checkbox("Show availability for all engineers (including those without assignments)", value=True):
+    # Generate chart even if monthly_df is empty to show all engineers' availability
+    utilization_chart, availability_summary, availability_details = generate_monthly_utilization_chart(monthly_df, engineers_df)
+    
+    if utilization_chart is not None:
+        st.plotly_chart(utilization_chart, use_container_width=True)
+        
+        st.subheader("Engineer Availability Summary")
+        
+        # Color-code the availability summary
+        def color_status(val):
+            if 'Over-allocated' in str(val):
+                return 'background-color: #FF9999'
+            elif 'Fully occupied' in str(val):
+                return 'background-color: #FFEB99'
+            else:
+                return 'background-color: #CCFFCC'
+        
+        def color_availability(val):
+            try:
+                # Remove % sign and convert to float
+                val_float = float(str(val).replace('%', ''))
+                if val_float <= 0:
+                    return 'background-color: #FF9999'  # Red for no availability
+                elif val_float <= 20:
+                    return 'background-color: #FFEB99'  # Yellow for low availability
+                else:
+                    return 'background-color: #CCFFCC'  # Green for good availability
+            except:
+                return ''
+        
+        styled_summary = availability_summary.style.map(color_status, subset=['Status']).map(
+            color_availability, subset=['Current Availability', 'Avg. Monthly Availability'])
+        st.dataframe(styled_summary, use_container_width=True)
+        
+        # Show detailed monthly breakdown
+        with st.expander("📋 Detailed Monthly Availability Breakdown"):
+            # Create pivot table for better visualization
+            if not availability_details.empty:
+                pivot_data = []
+                for _, row in availability_details.iterrows():
+                    pivot_data.append({
+                        'Engineer': row['Engineer'],
+                        'Month': row['Month'],
+                        'Allocation %': row['Effective Allocation %'],
+                        'Available %': row['Available %'],
+                        'Working Days': row['Working Days']
+                    })
+                
+                pivot_df = pd.DataFrame(pivot_data)
+                pivot_table = pivot_df.pivot_table(
+                    index='Engineer',
+                    columns='Month',
+                    values=['Available %', 'Allocation %'],
+                    fill_value=100
+                )
+                
+                st.write("**Monthly Availability % by Engineer:**")
+                availability_pivot = pivot_table['Available %']
+                
+                # Apply color coding to the pivot table
+                def color_cell(val):
+                    if val <= 0:
+                        return 'background-color: #FF9999; color: white'
+                    elif val <= 20:
+                        return 'background-color: #FFEB99'
+                    else:
+                        return 'background-color: #CCFFCC'
+                
+                styled_pivot = availability_pivot.style.map(color_cell)
+                st.dataframe(styled_pivot, use_container_width=True)
+                
+                st.write("**Monthly Allocation % by Engineer:**")
+                allocation_pivot = pivot_table['Allocation %']
+                
+                # Apply color coding to allocation
+                def color_allocation(val):
+                    if val >= 100:
+                        return 'background-color: #FF9999; color: white'
+                    elif val >= 80:
+                        return 'background-color: #FFEB99'
+                    else:
+                        return 'background-color: #CCFFCC'
+                
+                styled_allocation = allocation_pivot.style.map(color_allocation)
+                st.dataframe(styled_allocation, use_container_width=True)
+        
+        st.markdown("""
+        **Timeline Legend:**
+        - 🔴 Red line: Over-allocation threshold (100%)
+        - 🟠 Orange line: Fully occupied threshold (95%)
+        - Engineers are considered fully occupied at 95% to allow for buffer time
+        
+        **Availability Colors:**
+        - 🟢 Green: Good availability (>20%)
+        - 🟡 Yellow: Low availability (1-20%)
+        - 🔴 Red: No availability (0%)
+        
+        **Note:** PTO is distributed evenly across months (Annual PTO ÷ 12)
+        """)
 else:
-    # Fallback to regular data editor
-    programs_df = st.data_editor(programs_df, key="programs_editor")
-    st.session_state.programs_df = programs_df
+    st.info("No engineers found. Please add engineers in the Engineer Management section to see the utilization timeline.")
 
-if st.button("💾 Save Program Changes", key="save_prog_btn"):
-    programs_df.to_csv(program_file, index=False)
-    st.success("Program data saved!")
+# ─────────────────────────────────────────────────────────────
+# Future Projects Section
+# ─────────────────────────────────────────────────────────────
 
 st.header("🚀 Future Projects Planning")
 
@@ -635,38 +777,6 @@ with col3:
 
 st.header("📈 Export and Visualization")
 
-# Show Program Allocation Chart Preview instead of Gantt
-allocation_chart, utilization_df = generate_allocation_chart_preview(programs_df)
-
-if allocation_chart is not None:
-    st.subheader("Program Allocation Chart Preview")
-    st.plotly_chart(allocation_chart, use_container_width=True)
-    
-    # Show utilization summary
-    st.subheader("Engineer Utilization Summary")
-    
-    # Color-code the utilization summary
-    def color_utilization(val):
-        if val >= 100:
-            return 'background-color: #FF9999'  # Red for over-allocated
-        elif val >= 80:
-            return 'background-color: #FFEB99'  # Yellow for high utilization
-        else:
-            return 'background-color: #CCFFCC'  # Green for under-utilized
-    
-    styled_df = utilization_df.style.map(color_utilization, subset=['Effective Total %'])
-    st.dataframe(styled_df, use_container_width=True)
-    
-    # Legend
-    st.markdown("""
-    **Color Legend:**
-    - 🟢 Green: Under-utilized (<80%)
-    - 🟡 Yellow: Well-utilized (80-99%)  
-    - 🔴 Red: Over-allocated (≥100%)
-    """)
-else:
-    st.info("No allocation data found for chart preview. Add some 'Allocation' or '% Allocated' columns with values > 0.")
-
 # Show Future Projects Timeline
 if 'future_projects_df' in st.session_state:
     future_timeline = generate_future_projects_timeline(st.session_state.future_projects_df)
@@ -676,16 +786,16 @@ if 'future_projects_df' in st.session_state:
     else:
         st.info("No future projects data available for timeline. Add projects in the Future Projects Planning section above.")
 
-if st.button("Generate Excel File with Charts", key="export_excel"):
+if st.button("Generate Excel File with All Data", key="export_excel"):
     try:
-        excel_file = generate_excel(engineers_df, programs_df)
+        excel_file = generate_excel(engineers_df, monthly_df)
         st.download_button(
             label="📥 Download Excel File",
             data=excel_file,
             file_name="Engineer_Resource_Allocation.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        st.success("Excel file generated successfully!")
+        st.success("Excel file generated successfully with all data!")
     except Exception as e:
         st.error(f"Error generating Excel file: {str(e)}")
-        st.info("This might be due to invalid data. Please check your allocation percentages and try again.")
+        st.info("This might be due to invalid data. Please check your data and try again.")

@@ -235,7 +235,7 @@ The exported Excel file includes:
 ## Support
 
 For issues or feature requests, please contact your IT administrator or the development team.
-
+To run the tool use: nohup streamlit run resource_allocation_app.py --server.port 8000 > streamlit.log 2>&1 &
 ---
 
 *MS Perfect Resources - Making resource management perfect for your team*
