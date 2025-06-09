@@ -24,6 +24,86 @@ except ImportError:
     st.info("Displaying read-only data editor instead.")
 
 # ─────────────────────────────────────────────────────────────
+# Helper Functions for Quarterly Calculations
+# Fiscal Year Convention: FY starts in August
+# Example: August 2025 = Q1 FY26, July 2025 = Q4 FY25
+# ─────────────────────────────────────────────────────────────
+
+def get_fiscal_quarter(month_str):
+    """Get fiscal quarter based on August start (Q1: Aug-Oct, Q2: Nov-Jan, Q3: Feb-Apr, Q4: May-Jul)
+    
+    Fiscal year starts in August, so:
+    - August 2025 through July 2026 = FY26
+    - August 2024 through July 2025 = FY25
+    
+    Examples:
+    - July 2025 = Q4 FY25
+    - August 2025 = Q1 FY26
+    - January 2026 = Q2 FY26
+    """
+    try:
+        month_date = datetime.strptime(month_str, "%Y-%m")
+        month = month_date.month
+        year = month_date.year
+        
+        # Fiscal year starts in August
+        # If month is August or later, fiscal year is current year + 1
+        # If month is before August, fiscal year is current year
+        if month >= 8:  # August through December
+            fiscal_year = year + 1
+        else:  # January through July
+            fiscal_year = year
+        
+        if month in [8, 9, 10]:  # Aug-Oct
+            return f"Q1 FY{fiscal_year}"
+        elif month in [11, 12]:  # Nov-Dec
+            return f"Q2 FY{fiscal_year}"
+        elif month in [1]:  # Jan
+            return f"Q2 FY{fiscal_year}"
+        elif month in [2, 3, 4]:  # Feb-Apr
+            return f"Q3 FY{fiscal_year}"
+        else:  # May-Jul (months 5, 6, 7)
+            return f"Q4 FY{fiscal_year}"
+    except:
+        return "Unknown"
+
+def get_quarter_months(quarter_str):
+    """Get the months that belong to a specific quarter
+    
+    Since FY starts in August:
+    - Q1 FY26 = Aug-Oct 2025
+    - Q2 FY26 = Nov 2025 - Jan 2026
+    - Q3 FY26 = Feb-Apr 2026
+    - Q4 FY26 = May-Jul 2026
+    """
+    # Extract year from quarter string (e.g., "Q1 FY2026" -> 2026)
+    try:
+        parts = quarter_str.split()
+        quarter_num = parts[0]
+        fiscal_year = int(parts[1].replace("FY", ""))
+        
+        # Fiscal year 2026 starts in August 2025
+        # So we need to subtract 1 from fiscal year to get the calendar year for Q1-Q2 start
+        if quarter_num == "Q1":
+            # Q1 is Aug-Oct of the previous calendar year
+            return [f"{fiscal_year-1}-08", f"{fiscal_year-1}-09", f"{fiscal_year-1}-10"]
+        elif quarter_num == "Q2":
+            # Q2 is Nov-Dec of previous calendar year and Jan of fiscal year
+            return [f"{fiscal_year-1}-11", f"{fiscal_year-1}-12", f"{fiscal_year}-01"]
+        elif quarter_num == "Q3":
+            # Q3 is Feb-Apr of the fiscal year
+            return [f"{fiscal_year}-02", f"{fiscal_year}-03", f"{fiscal_year}-04"]
+        else:  # Q4
+            # Q4 is May-Jul of the fiscal year
+            return [f"{fiscal_year}-05", f"{fiscal_year}-06", f"{fiscal_year}-07"]
+    except:
+        return []
+
+def sort_quarters_chronologically(quarters):
+    """Sort quarters in chronological order (by fiscal year then quarter number)"""
+    return sorted(quarters, key=lambda x: (int(x.split()[1].replace('FY', '')), int(x.split()[0][1])))
+
+# ─────────────────────────────────────────────────────────────
 # 1) Default Data Constructors
 # ─────────────────────────────────────────────────────────────
 
@@ -61,7 +141,7 @@ def default_future_projects():
     })
 
 def default_monthly_assignments():
-    """Default monthly assignments structure"""
+    """Default monthly assignments structure with Program and Priority fields"""
     current_date = datetime.now()
     months = []
     for i in range(6):  # Default to 6 months ahead
@@ -70,7 +150,9 @@ def default_monthly_assignments():
     
     return pd.DataFrame({
         "Engineer Name": [],
+        "Program": [],
         "Feature": [],
+        "Priority": [],  # New field
         "Month": [],
         "Allocation %": [],
         "Notes": []
@@ -263,6 +345,272 @@ def generate_monthly_utilization_chart(monthly_df, engineers_df):
                                               'Effective Allocation %', 'Available %', 'PTO Days', 'Working Days'])
     
     return summary_df, availability_df
+
+def generate_quarterly_availability_chart(monthly_df, engineers_df):
+    """Generate quarterly bandwidth availability chart per engineer"""
+    
+    # Get all valid engineers
+    all_engineers = []
+    for name in engineers_df['Engineer Name'].tolist():
+        if name is not None and str(name).strip() and str(name) != 'nan':
+            all_engineers.append(str(name).strip())
+    
+    if not all_engineers:
+        return None
+    
+    # Generate months for next 12 months
+    current_date = datetime.now()
+    months = []
+    for i in range(12):
+        month_date = current_date + timedelta(days=30*i)
+        months.append(month_date.strftime("%Y-%m"))
+    
+    # Calculate quarterly data
+    quarterly_data = []
+    
+    # Group months by quarter
+    quarters = {}
+    for month in months:
+        quarter = get_fiscal_quarter(month)
+        if quarter not in quarters:
+            quarters[quarter] = []
+        quarters[quarter].append(month)
+    
+    for quarter, quarter_months in quarters.items():
+        for engineer in all_engineers:
+            total_available = 0
+            total_allocated = 0
+            total_working_days = 0
+            total_pto_days = 0
+            
+            for month in quarter_months:
+                # Get allocations for this month
+                month_allocation = 0
+                if not monthly_df.empty and 'Month' in monthly_df.columns:
+                    month_data = monthly_df[(monthly_df['Month'] == month) & 
+                                          (monthly_df['Engineer Name'].astype(str) == str(engineer))]
+                    month_allocation = month_data['Allocation %'].sum() if not month_data.empty else 0
+                
+                # Get PTO days
+                pto_days = 0
+                working_days_in_month = 22
+                
+                engineer_matches = engineers_df[engineers_df['Engineer Name'].astype(str) == str(engineer)]
+                if not engineer_matches.empty:
+                    engineer_row = engineer_matches.iloc[0]
+                    month_pto_key = f"PTO_{month.replace('-', '_')}"
+                    if month_pto_key in engineers_df.columns:
+                        pto_days = float(engineer_row.get(month_pto_key, 0))
+                
+                effective_working_days = max(0, working_days_in_month - pto_days)
+                working_days_ratio = effective_working_days / working_days_in_month if working_days_in_month > 0 else 1
+                
+                # Calculate for the month
+                effective_allocation = month_allocation * working_days_ratio
+                available_capacity = max(0, 100 - effective_allocation)
+                
+                total_available += available_capacity
+                total_allocated += effective_allocation
+                total_working_days += effective_working_days
+                total_pto_days += pto_days
+            
+            # Average over the quarter
+            num_months = len(quarter_months)
+            avg_available = total_available / num_months if num_months > 0 else 0
+            avg_allocated = total_allocated / num_months if num_months > 0 else 0
+            
+            quarterly_data.append({
+                'Engineer': engineer,
+                'Quarter': quarter,
+                'Avg Available %': round(avg_available, 1),
+                'Avg Allocated %': round(avg_allocated, 1),
+                'Total PTO Days': round(total_pto_days, 1)
+            })
+    
+    if not quarterly_data:
+        return None
+    
+    quarterly_df = pd.DataFrame(quarterly_data)
+    
+    # Create the chart
+    fig = go.Figure()
+    
+    # Sort quarters for proper display
+    sorted_quarters = sort_quarters_chronologically(quarterly_df['Quarter'].unique())
+    
+    for engineer in all_engineers:
+        engineer_data = quarterly_df[quarterly_df['Engineer'] == engineer]
+        
+        fig.add_trace(go.Bar(
+            name=engineer,
+            x=sorted_quarters,
+            y=engineer_data['Avg Available %'].tolist(),
+            text=engineer_data['Avg Available %'].apply(lambda x: f"{x}%"),
+            textposition='auto',
+            hovertemplate='%{x}<br>Available: %{y}%<br>Engineer: ' + engineer + '<extra></extra>'
+        ))
+    
+    fig.update_layout(
+        title="Quarterly Bandwidth Availability by Engineer",
+        xaxis_title="Fiscal Quarter",
+        yaxis_title="Average Available Bandwidth %",
+        barmode='group',
+        height=500,
+        showlegend=True
+    )
+    
+    return fig
+
+def generate_quarterly_utilization_charts(monthly_df, engineers_df):
+    """Generate quarterly utilization charts by program, feature, and engineer"""
+    
+    if monthly_df.empty:
+        return None, None, None
+    
+    # Generate months for next 12 months
+    current_date = datetime.now()
+    months = []
+    for i in range(12):
+        month_date = current_date + timedelta(days=30*i)
+        months.append(month_date.strftime("%Y-%m"))
+    
+    # Filter monthly_df to only include these months
+    monthly_df_filtered = monthly_df[monthly_df['Month'].isin(months)]
+    
+    if monthly_df_filtered.empty:
+        return None, None, None
+    
+    # Add Quarter column
+    monthly_df_filtered['Quarter'] = monthly_df_filtered['Month'].apply(get_fiscal_quarter)
+    
+    # 1. Utilization by Program
+    program_data = []
+    if 'Program' in monthly_df_filtered.columns:
+        program_quarterly = monthly_df_filtered.groupby(['Quarter', 'Program'])['Allocation %'].sum().reset_index()
+        program_quarterly['Allocation %'] = program_quarterly['Allocation %'] / 3  # Average over quarter
+        
+        # Sort quarters chronologically
+        quarter_order = sort_quarters_chronologically(program_quarterly['Quarter'].unique())
+        
+        fig_program = px.bar(
+            program_quarterly,
+            x='Quarter',
+            y='Allocation %',
+            color='Program',
+            title='Quarterly Bandwidth Utilization by Program',
+            labels={'Allocation %': 'Average Allocation %'},
+            text='Allocation %',
+            category_orders={'Quarter': quarter_order}
+        )
+        fig_program.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+        fig_program.update_layout(height=500)
+    else:
+        fig_program = None
+    
+    # 2. Utilization by Feature
+    feature_quarterly = monthly_df_filtered.groupby(['Quarter', 'Feature'])['Allocation %'].sum().reset_index()
+    feature_quarterly['Allocation %'] = feature_quarterly['Allocation %'] / 3  # Average over quarter
+    
+    # Get top 10 features by allocation
+    top_features = feature_quarterly.groupby('Feature')['Allocation %'].sum().nlargest(10).index.tolist()
+    feature_quarterly_top = feature_quarterly[feature_quarterly['Feature'].isin(top_features)]
+    
+    # Sort quarters chronologically
+    quarter_order = sort_quarters_chronologically(feature_quarterly_top['Quarter'].unique())
+    
+    fig_feature = px.bar(
+        feature_quarterly_top,
+        x='Quarter',
+        y='Allocation %',
+        color='Feature',
+        title='Quarterly Bandwidth Utilization by Top Features',
+        labels={'Allocation %': 'Average Allocation %'},
+        text='Allocation %',
+        category_orders={'Quarter': quarter_order}
+    )
+    fig_feature.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+    fig_feature.update_layout(height=500)
+    
+    # 3. Utilization by Engineer (with PTO adjustment)
+    engineer_quarterly_data = []
+    
+    quarters = monthly_df_filtered['Quarter'].unique()
+    for quarter in quarters:
+        quarter_months = get_quarter_months(quarter)
+        
+        for engineer_name in monthly_df_filtered['Engineer Name'].unique():
+            engineer_str = str(engineer_name).strip()
+            
+            total_allocation = 0
+            total_effective_allocation = 0
+            
+            for month in quarter_months:
+                if month in months:  # Only process months in our range
+                    # Get allocations
+                    month_data = monthly_df_filtered[
+                        (monthly_df_filtered['Month'] == month) & 
+                        (monthly_df_filtered['Engineer Name'].astype(str).str.strip() == engineer_str)
+                    ]
+                    month_allocation = month_data['Allocation %'].sum() if not month_data.empty else 0
+                    
+                    # Get PTO adjustment
+                    working_days_ratio = 1
+                    engineer_matches = engineers_df[engineers_df['Engineer Name'].astype(str).str.strip() == engineer_str]
+                    
+                    if not engineer_matches.empty:
+                        engineer_row = engineer_matches.iloc[0]
+                        month_pto_key = f"PTO_{month.replace('-', '_')}"
+                        if month_pto_key in engineers_df.columns:
+                            pto_days = float(engineer_row.get(month_pto_key, 0))
+                            working_days_in_month = 22
+                            effective_working_days = max(0, working_days_in_month - pto_days)
+                            working_days_ratio = effective_working_days / working_days_in_month if working_days_in_month > 0 else 1
+                    
+                    total_allocation += month_allocation
+                    total_effective_allocation += month_allocation * working_days_ratio
+            
+            # Average over the quarter
+            num_months = len([m for m in quarter_months if m in months])
+            if num_months > 0:
+                engineer_quarterly_data.append({
+                    'Quarter': quarter,
+                    'Engineer': engineer_str,
+                    'Avg Allocation %': round(total_allocation / num_months, 1),
+                    'Avg Effective Allocation %': round(total_effective_allocation / num_months, 1)
+                })
+    
+    if engineer_quarterly_data:
+        engineer_quarterly_df = pd.DataFrame(engineer_quarterly_data)
+        
+        fig_engineer = go.Figure()
+        
+        # Sort quarters chronologically
+        sorted_quarters = sort_quarters_chronologically(engineer_quarterly_df['Quarter'].unique())
+        
+        for engineer in engineer_quarterly_df['Engineer'].unique():
+            engineer_data = engineer_quarterly_df[engineer_quarterly_df['Engineer'] == engineer]
+            
+            fig_engineer.add_trace(go.Bar(
+                name=engineer,
+                x=sorted_quarters,
+                y=engineer_data['Avg Effective Allocation %'].tolist(),
+                text=engineer_data['Avg Effective Allocation %'].apply(lambda x: f"{x}%"),
+                textposition='auto',
+                hovertemplate='%{x}<br>Utilization: %{y}%<br>Engineer: ' + engineer + '<extra></extra>'
+            ))
+        
+        fig_engineer.update_layout(
+            title="Quarterly Bandwidth Utilization by Engineer (PTO Adjusted)",
+            xaxis_title="Fiscal Quarter",
+            yaxis_title="Average Effective Utilization %",
+            barmode='group',
+            height=500,
+            showlegend=True
+        )
+    else:
+        fig_engineer = None
+    
+    return fig_program, fig_feature, fig_engineer
 
 def create_monthly_assignment_matrix(engineers_df, features, num_months=6):
     """Create a matrix view for monthly assignments"""
@@ -480,6 +828,14 @@ try:
     # Ensure Allocation % is numeric
     if 'Allocation %' in loaded_monthly_df.columns:
         loaded_monthly_df['Allocation %'] = pd.to_numeric(loaded_monthly_df['Allocation %'], errors='coerce').fillna(0)
+    # Add Program column if it doesn't exist
+    if 'Program' not in loaded_monthly_df.columns:
+        loaded_monthly_df['Program'] = 'Default Program'
+    # Add Priority column if it doesn't exist
+    if 'Priority' not in loaded_monthly_df.columns:
+        loaded_monthly_df['Priority'] = 'Medium'
+        # Save the updated dataframe
+        loaded_monthly_df.to_csv(monthly_assignments_file, index=False)
     st.session_state.monthly_assignments_df = loaded_monthly_df
 except FileNotFoundError:
     if "monthly_assignments_df" not in st.session_state:
@@ -929,7 +1285,7 @@ if st.button("💾 Save Engineer Changes", key="save_eng_btn"):
     st.success("✅ Engineer data saved to file!")
 
 # ─────────────────────────────────────────────────────────────
-# NEW SECTION: Monthly Feature Assignments
+# NEW SECTION: Monthly Feature Assignments with Edit Functionality
 # ─────────────────────────────────────────────────────────────
 
 st.header("📅 Monthly Feature Assignments")
@@ -944,108 +1300,306 @@ if 'Engineer Name' in monthly_df.columns:
     if 'Allocation %' in monthly_df.columns:
         monthly_df['Allocation %'] = pd.to_numeric(monthly_df['Allocation %'], errors='coerce').fillna(0)
 
-# UI for adding monthly assignments
-col1, col2, col3 = st.columns(3)
+# Add Program column if it doesn't exist
+if 'Program' not in monthly_df.columns:
+    monthly_df['Program'] = 'Default Program'
+    st.session_state.monthly_assignments_df = monthly_df
+    monthly_df.to_csv(monthly_assignments_file, index=False)
 
-with col1:
-    engineer_list = engineers_df['Engineer Name'].tolist()
-    # Filter out empty names and handle different data types
-    valid_engineers = []
-    for name in engineer_list:
-        if name is not None and str(name).strip() and str(name) != 'nan':
-            valid_engineers.append(str(name).strip())
-    
-    if not valid_engineers:
-        st.warning("No engineers with names found. Please add engineer names first.")
-        selected_engineer = None
-    else:
-        selected_engineer = st.selectbox("Select Engineer", options=valid_engineers, key="monthly_engineer")
+# Add Priority column if it doesn't exist
+if 'Priority' not in monthly_df.columns:
+    monthly_df['Priority'] = 'Medium'
+    st.session_state.monthly_assignments_df = monthly_df
+    monthly_df.to_csv(monthly_assignments_file, index=False)
 
-with col2:
-    feature_name = st.text_input("Feature Name", key="monthly_feature")
+# Initialize editing state if not exists
+if 'editing_assignment' not in st.session_state:
+    st.session_state.editing_assignment = None
+if 'edit_mode' not in st.session_state:
+    st.session_state.edit_mode = False
 
-with col3:
-    # Generate month options
-    current_date = datetime.now()
-    month_options = []
-    for i in range(12):  # Next 12 months
-        month_date = current_date + timedelta(days=30*i)
-        month_options.append(month_date.strftime("%Y-%m"))
-    selected_month = st.selectbox("Month", options=month_options, key="monthly_month")
+# Tabs for Add/Edit modes
+assignment_tab1, assignment_tab2 = st.tabs(["➕ Add Assignment", "✏️ Edit Assignment"])
 
-col4, col5 = st.columns(2)
-with col4:
-    allocation_percent = st.number_input("Allocation %", min_value=0, max_value=100, value=0, step=5, key="monthly_allocation")
-with col5:
-    notes = st.text_input("Notes", key="monthly_notes")
+with assignment_tab1:
+    # UI for adding monthly assignments
+    col1, col2 = st.columns(2)
 
-# Buttons in columns for better layout
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button("➕ Add Monthly Assignment", key="add_monthly_assignment", type="primary"):
-        if selected_engineer and feature_name and allocation_percent > 0:
-            new_assignment = {
-                "Engineer Name": str(selected_engineer).strip(),  # Ensure it's stored as string and stripped
-                "Feature": feature_name,
-                "Month": selected_month,
-                "Allocation %": allocation_percent,  # Store as number, not string
-                "Notes": notes
-            }
-            # Get current dataframe
-            current_df = st.session_state.monthly_assignments_df
-            # Add new assignment
-            new_df = pd.concat([current_df, pd.DataFrame([new_assignment])], ignore_index=True)
-            # Ensure all engineer names are stripped
-            new_df['Engineer Name'] = new_df['Engineer Name'].fillna('').astype(str).str.strip()
-            # Update session state
-            st.session_state.monthly_assignments_df = new_df
-            # Auto-save
-            new_df.to_csv(monthly_assignments_file, index=False)
-            st.success(f"Added assignment: {selected_engineer} -> {feature_name} ({allocation_percent}%) for {selected_month}")
-            # Clear the monthly_df cache
-            if 'monthly_df' in locals():
-                del monthly_df
-            st.rerun()  # Force refresh to update utilization
+    with col1:
+        engineer_list = engineers_df['Engineer Name'].tolist()
+        # Filter out empty names and handle different data types
+        valid_engineers = []
+        for name in engineer_list:
+            if name is not None and str(name).strip() and str(name) != 'nan':
+                valid_engineers.append(str(name).strip())
+        
+        if not valid_engineers:
+            st.warning("No engineers with names found. Please add engineer names first.")
+            selected_engineer = None
         else:
-            st.error("Please fill in all required fields")
+            selected_engineer = st.selectbox("Select Engineer", options=valid_engineers, key="monthly_engineer")
 
-with col2:
-    # Save button right after Add button
-    if st.button("💾 Save All Assignments", key="save_monthly_btn"):
-        # Get latest data from session state
-        save_df = st.session_state.monthly_assignments_df
-        # Ensure Engineer Name is string type before saving and strip whitespace
-        save_df['Engineer Name'] = save_df['Engineer Name'].fillna('').astype(str).str.strip()
-        # Save to CSV
-        save_df.to_csv(monthly_assignments_file, index=False)
-        st.success("All monthly assignments saved!")
-        st.rerun()  # Force refresh to update utilization
+    with col2:
+        program_name = st.text_input("Program Name", key="monthly_program", placeholder="e.g., Project Alpha, Core Platform")
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        feature_name = st.text_input("Feature Name", key="monthly_feature")
+
+    with col4:
+        priority = st.selectbox("Priority", options=["Critical", "High", "Medium", "Low"], index=2, key="monthly_priority")
+
+    col5, col6 = st.columns(2)
+
+    with col5:
+        # Generate month options
+        current_date = datetime.now()
+        month_options = []
+        for i in range(12):  # Next 12 months
+            month_date = current_date + timedelta(days=30*i)
+            month_options.append(month_date.strftime("%Y-%m"))
+        selected_month = st.selectbox("Month", options=month_options, key="monthly_month")
+
+    with col6:
+        allocation_percent = st.number_input("Allocation %", min_value=0, max_value=100, value=0, step=5, key="monthly_allocation")
+
+    notes = st.text_area("Notes", key="monthly_notes", height=75)
+
+    # Buttons in columns for better layout
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("➕ Add Monthly Assignment", key="add_monthly_assignment", type="primary"):
+            if selected_engineer and feature_name and allocation_percent > 0:
+                new_assignment = {
+                    "Engineer Name": str(selected_engineer).strip(),  # Ensure it's stored as string and stripped
+                    "Program": program_name if program_name else "Default Program",
+                    "Feature": feature_name,
+                    "Priority": priority,  # Add priority
+                    "Month": selected_month,
+                    "Allocation %": allocation_percent,  # Store as number, not string
+                    "Notes": notes
+                }
+                # Get current dataframe
+                current_df = st.session_state.monthly_assignments_df
+                # Add new assignment
+                new_df = pd.concat([current_df, pd.DataFrame([new_assignment])], ignore_index=True)
+                # Ensure all engineer names are stripped
+                new_df['Engineer Name'] = new_df['Engineer Name'].fillna('').astype(str).str.strip()
+                # Update session state
+                st.session_state.monthly_assignments_df = new_df
+                # Auto-save
+                new_df.to_csv(monthly_assignments_file, index=False)
+                st.success(f"Added assignment: {selected_engineer} -> {feature_name} ({allocation_percent}%) for {selected_month} - Priority: {priority}")
+                # Clear the monthly_df cache
+                if 'monthly_df' in locals():
+                    del monthly_df
+                st.rerun()  # Force refresh to update utilization
+            else:
+                st.error("Please fill in all required fields")
+
+    with col2:
+        # Save button right after Add button
+        if st.button("💾 Save All Assignments", key="save_monthly_btn"):
+            # Get latest data from session state
+            save_df = st.session_state.monthly_assignments_df
+            # Ensure Engineer Name is string type before saving and strip whitespace
+            save_df['Engineer Name'] = save_df['Engineer Name'].fillna('').astype(str).str.strip()
+            # Save to CSV
+            save_df.to_csv(monthly_assignments_file, index=False)
+            st.success("All monthly assignments saved!")
+            st.rerun()  # Force refresh to update utilization
+
+with assignment_tab2:
+    st.subheader("Edit Existing Assignment")
+    
+    # Get current assignments
+    current_monthly_df = st.session_state.monthly_assignments_df
+    
+    if current_monthly_df.empty:
+        st.info("No assignments to edit. Add some assignments first!")
+    else:
+        # Create selection options
+        edit_options = []
+        for idx, row in current_monthly_df.iterrows():
+            allocation = row['Allocation %']
+            priority = row.get('Priority', 'Medium')
+            edit_options.append(f"{idx}: [{priority}] {row['Engineer Name']} - {row['Program']} - {row['Feature']} ({row['Month']}, {allocation}%)")
+        
+        selected_to_edit = st.selectbox("Select assignment to edit:", options=edit_options, key="edit_assignment_select")
+        
+        if selected_to_edit:
+            # Extract index from the selected option
+            edit_idx = int(selected_to_edit.split(":")[0])
+            assignment_to_edit = current_monthly_df.iloc[edit_idx]
+            
+            # Show edit form
+            st.write("**Edit Assignment Details:**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Get valid engineers
+                engineer_list = engineers_df['Engineer Name'].tolist()
+                valid_engineers = []
+                for name in engineer_list:
+                    if name is not None and str(name).strip() and str(name) != 'nan':
+                        valid_engineers.append(str(name).strip())
+                
+                # Find current engineer index
+                current_engineer_idx = 0
+                try:
+                    current_engineer_idx = valid_engineers.index(str(assignment_to_edit['Engineer Name']).strip())
+                except:
+                    pass
+                
+                edit_engineer = st.selectbox(
+                    "Engineer", 
+                    options=valid_engineers, 
+                    index=current_engineer_idx,
+                    key="edit_engineer"
+                )
+            
+            with col2:
+                edit_program = st.text_input(
+                    "Program Name", 
+                    value=assignment_to_edit['Program'],
+                    key="edit_program"
+                )
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                edit_feature = st.text_input(
+                    "Feature Name", 
+                    value=assignment_to_edit['Feature'],
+                    key="edit_feature"
+                )
+            
+            with col4:
+                priority_options = ["Critical", "High", "Medium", "Low"]
+                current_priority_idx = priority_options.index(assignment_to_edit.get('Priority', 'Medium'))
+                edit_priority = st.selectbox(
+                    "Priority", 
+                    options=priority_options, 
+                    index=current_priority_idx,
+                    key="edit_priority"
+                )
+            
+            col5, col6 = st.columns(2)
+            
+            with col5:
+                # Generate month options
+                current_date = datetime.now()
+                month_options = []
+                for i in range(12):
+                    month_date = current_date + timedelta(days=30*i)
+                    month_options.append(month_date.strftime("%Y-%m"))
+                
+                # Find current month index
+                current_month_idx = 0
+                try:
+                    current_month_idx = month_options.index(assignment_to_edit['Month'])
+                except:
+                    pass
+                
+                edit_month = st.selectbox(
+                    "Month", 
+                    options=month_options, 
+                    index=current_month_idx,
+                    key="edit_month"
+                )
+            
+            with col6:
+                edit_allocation = st.number_input(
+                    "Allocation %", 
+                    min_value=0, 
+                    max_value=100, 
+                    value=int(assignment_to_edit['Allocation %']),
+                    step=5,
+                    key="edit_allocation"
+                )
+            
+            edit_notes = st.text_area(
+                "Notes", 
+                value=assignment_to_edit.get('Notes', ''),
+                key="edit_notes",
+                height=75
+            )
+            
+            # Update and Delete buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("💾 Update Assignment", key="update_assignment_btn", type="primary"):
+                    # Update the assignment
+                    current_monthly_df.loc[edit_idx, 'Engineer Name'] = str(edit_engineer).strip()
+                    current_monthly_df.loc[edit_idx, 'Program'] = edit_program
+                    current_monthly_df.loc[edit_idx, 'Feature'] = edit_feature
+                    current_monthly_df.loc[edit_idx, 'Priority'] = edit_priority
+                    current_monthly_df.loc[edit_idx, 'Month'] = edit_month
+                    current_monthly_df.loc[edit_idx, 'Allocation %'] = edit_allocation
+                    current_monthly_df.loc[edit_idx, 'Notes'] = edit_notes
+                    
+                    # Ensure all engineer names are stripped
+                    current_monthly_df['Engineer Name'] = current_monthly_df['Engineer Name'].fillna('').astype(str).str.strip()
+                    
+                    # Update session state
+                    st.session_state.monthly_assignments_df = current_monthly_df
+                    
+                    # Auto-save
+                    current_monthly_df.to_csv(monthly_assignments_file, index=False)
+                    st.success("Assignment updated and saved!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️ Delete This Assignment", key="delete_from_edit_btn"):
+                    updated_df = current_monthly_df.drop(index=edit_idx).reset_index(drop=True)
+                    st.session_state.monthly_assignments_df = updated_df
+                    # Auto-save
+                    updated_df.to_csv(monthly_assignments_file, index=False)
+                    st.success("Assignment deleted and saved!")
+                    st.rerun()
 
 # Display selected engineer's assignments dynamically
-if selected_engineer:
+if 'monthly_engineer' in st.session_state and st.session_state.monthly_engineer:
+    selected_engineer = st.session_state.monthly_engineer
     st.subheader(f"📋 {selected_engineer}'s Current Assignments")
     
     # Get the latest monthly_df from session state
     current_monthly_df = st.session_state.monthly_assignments_df
     
     # Ensure we're comparing strings properly
-    engineer_assignments = current_monthly_df[current_monthly_df['Engineer Name'].astype(str) == str(selected_engineer)].sort_values('Month')
+    engineer_assignments = current_monthly_df[current_monthly_df['Engineer Name'].astype(str) == str(selected_engineer)].sort_values(['Priority', 'Month'])
     
     if not engineer_assignments.empty:
         # Create a formatted version for display
         display_df = engineer_assignments.copy()
         display_df['Allocation %'] = display_df['Allocation %'].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
         
+        # Add priority color coding
+        def priority_color(priority):
+            colors = {
+                'Critical': '🔴',
+                'High': '🟠',
+                'Medium': '🟡',
+                'Low': '🟢'
+            }
+            return colors.get(priority, '⚪') + ' ' + priority
+        
+        if 'Priority' in display_df.columns:
+            display_df['Priority'] = display_df['Priority'].apply(priority_color)
+        
         # Display the dataframe
         st.dataframe(
-            display_df[['Feature', 'Month', 'Allocation %', 'Notes']], 
+            display_df[['Priority', 'Program', 'Feature', 'Month', 'Allocation %', 'Notes']], 
             use_container_width=True,
             hide_index=True
         )
         
         # Quick stats for selected engineer
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             total_assignments = len(engineer_assignments)
             st.metric("Total Assignments", total_assignments)
@@ -1056,6 +1610,11 @@ if selected_engineer:
             # Calculate average allocation
             avg_allocation = engineer_assignments['Allocation %'].mean()
             st.metric("Avg. Allocation", f"{avg_allocation:.1f}%")
+        with col4:
+            # Count critical/high priority items
+            if 'Priority' in engineer_assignments.columns:
+                critical_high = len(engineer_assignments[engineer_assignments['Priority'].isin(['Critical', 'High'])])
+                st.metric("Critical/High Priority", critical_high)
     else:
         st.info(f"No assignments found for {selected_engineer}. Add one using the form above!")
 
@@ -1067,24 +1626,49 @@ current_monthly_df = st.session_state.monthly_assignments_df
 if not current_monthly_df.empty:
     st.subheader("All Monthly Assignments")
     
+    # Add high priority filter
+    show_high_priority = st.checkbox("Show only Critical/High priority assignments", key="filter_high_priority")
+    
+    if show_high_priority and 'Priority' in current_monthly_df.columns:
+        filtered_df = current_monthly_df[current_monthly_df['Priority'].isin(['Critical', 'High'])]
+        if filtered_df.empty:
+            st.info("No Critical or High priority assignments found.")
+            current_monthly_df = st.session_state.monthly_assignments_df  # Reset to show all
+        else:
+            current_monthly_df = filtered_df
+            st.info(f"Showing {len(filtered_df)} Critical/High priority assignments")
+    
     # Add view options
-    view_mode = st.radio("View Mode:", ["By Month", "By Engineer", "All Assignments"], horizontal=True)
+    view_mode = st.radio("View Mode:", ["By Engineer", "By Month", "By Program", "All Assignments"], horizontal=True)
     
     if view_mode == "By Engineer":
         # Group by engineer for better visualization
         engineers_in_monthly = current_monthly_df['Engineer Name'].unique()
         
         for engineer in engineers_in_monthly:
-            if str(engineer) != str(selected_engineer):  # Don't duplicate the selected engineer
-                engineer_assignments = current_monthly_df[current_monthly_df['Engineer Name'] == engineer].sort_values('Month')
+            if 'monthly_engineer' not in st.session_state or str(engineer) != str(st.session_state.monthly_engineer):  # Don't duplicate the selected engineer
+                engineer_assignments = current_monthly_df[current_monthly_df['Engineer Name'] == engineer].sort_values(['Priority', 'Month'])
                 
                 with st.expander(f"📋 {engineer}'s Assignments ({len(engineer_assignments)} assignments)"):
                     if not engineer_assignments.empty:
                         display_df = engineer_assignments.copy()
                         display_df['Allocation %'] = display_df['Allocation %'].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
                         
+                        # Add priority color coding
+                        def priority_color(priority):
+                            colors = {
+                                'Critical': '🔴',
+                                'High': '🟠',
+                                'Medium': '🟡',
+                                'Low': '🟢'
+                            }
+                            return colors.get(priority, '⚪') + ' ' + priority
+                        
+                        if 'Priority' in display_df.columns:
+                            display_df['Priority'] = display_df['Priority'].apply(priority_color)
+                        
                         st.dataframe(
-                            display_df[['Feature', 'Month', 'Allocation %', 'Notes']], 
+                            display_df[['Priority', 'Program', 'Feature', 'Month', 'Allocation %', 'Notes']], 
                             use_container_width=True,
                             hide_index=True
                         )
@@ -1094,49 +1678,85 @@ if not current_monthly_df.empty:
         months = sorted(current_monthly_df['Month'].unique())
         
         for month in months:
-            month_assignments = current_monthly_df[current_monthly_df['Month'] == month].sort_values('Engineer Name')
+            month_assignments = current_monthly_df[current_monthly_df['Month'] == month].sort_values(['Priority', 'Engineer Name'])
             
             with st.expander(f"📅 {month} Assignments ({len(month_assignments)} assignments)"):
                 if not month_assignments.empty:
                     display_df = month_assignments.copy()
                     display_df['Allocation %'] = display_df['Allocation %'].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
                     
+                    # Add priority color coding
+                    def priority_color(priority):
+                        colors = {
+                            'Critical': '🔴',
+                            'High': '🟠',
+                            'Medium': '🟡',
+                            'Low': '🟢'
+                        }
+                        return colors.get(priority, '⚪') + ' ' + priority
+                    
+                    if 'Priority' in display_df.columns:
+                        display_df['Priority'] = display_df['Priority'].apply(priority_color)
+                    
                     st.dataframe(
-                        display_df[['Engineer Name', 'Feature', 'Allocation %', 'Notes']], 
+                        display_df[['Priority', 'Engineer Name', 'Program', 'Feature', 'Allocation %', 'Notes']], 
+                        use_container_width=True,
+                        hide_index=True
+                    )
+    
+    elif view_mode == "By Program":
+        # Group by program
+        programs = sorted(current_monthly_df['Program'].unique())
+        
+        for program in programs:
+            program_assignments = current_monthly_df[current_monthly_df['Program'] == program].sort_values(['Priority', 'Month', 'Engineer Name'])
+            
+            with st.expander(f"🎯 {program} ({len(program_assignments)} assignments)"):
+                if not program_assignments.empty:
+                    display_df = program_assignments.copy()
+                    display_df['Allocation %'] = display_df['Allocation %'].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
+                    
+                    # Add priority color coding
+                    def priority_color(priority):
+                        colors = {
+                            'Critical': '🔴',
+                            'High': '🟠',
+                            'Medium': '🟡',
+                            'Low': '🟢'
+                        }
+                        return colors.get(priority, '⚪') + ' ' + priority
+                    
+                    if 'Priority' in display_df.columns:
+                        display_df['Priority'] = display_df['Priority'].apply(priority_color)
+                    
+                    st.dataframe(
+                        display_df[['Priority', 'Engineer Name', 'Feature', 'Month', 'Allocation %', 'Notes']], 
                         use_container_width=True,
                         hide_index=True
                     )
     
     else:  # All Assignments
-        display_df = current_monthly_df.copy().sort_values(['Month', 'Engineer Name'])
+        display_df = current_monthly_df.copy().sort_values(['Priority', 'Month', 'Engineer Name'])
         display_df['Allocation %'] = display_df['Allocation %'].apply(lambda x: f"{x}%" if isinstance(x, (int, float)) else x)
         
+        # Add priority color coding
+        def priority_color(priority):
+            colors = {
+                'Critical': '🔴',
+                'High': '🟠',
+                'Medium': '🟡',
+                'Low': '🟢'
+            }
+            return colors.get(priority, '⚪') + ' ' + priority
+        
+        if 'Priority' in display_df.columns:
+            display_df['Priority'] = display_df['Priority'].apply(priority_color)
+        
         st.dataframe(
-            display_df[['Engineer Name', 'Feature', 'Month', 'Allocation %', 'Notes']], 
+            display_df[['Priority', 'Engineer Name', 'Program', 'Feature', 'Month', 'Allocation %', 'Notes']], 
             use_container_width=True,
             hide_index=True
         )
-    
-    # Option to delete assignments
-    if len(current_monthly_df) > 0:
-        st.subheader("Delete Assignments")
-        # Create a more user-friendly way to select assignments to delete
-        delete_options = []
-        for idx, row in current_monthly_df.iterrows():
-            allocation = row['Allocation %']
-            delete_options.append(f"{idx}: {row['Engineer Name']} - {row['Feature']} ({row['Month']}, {allocation}%)")
-        
-        selected_to_delete = st.selectbox("Select assignment to delete:", options=delete_options, key="delete_monthly_select")
-        
-        if st.button("🗑️ Delete Selected Assignment", key="delete_monthly_btn"):
-            # Extract index from the selected option
-            delete_idx = int(selected_to_delete.split(":")[0])
-            updated_df = current_monthly_df.drop(index=delete_idx).reset_index(drop=True)
-            st.session_state.monthly_assignments_df = updated_df
-            # Auto-save
-            updated_df.to_csv(monthly_assignments_file, index=False)
-            st.success("Assignment deleted and saved!")
-            st.rerun()  # Refresh the page to update the display
 else:
     st.info("No monthly assignments yet. Use the form above to add assignments.")
 
@@ -1179,6 +1799,10 @@ with col2:
             loaded_monthly = pd.read_csv(monthly_assignments_file)
             loaded_monthly['Engineer Name'] = loaded_monthly['Engineer Name'].fillna('').astype(str).str.strip()
             loaded_monthly['Allocation %'] = pd.to_numeric(loaded_monthly['Allocation %'], errors='coerce').fillna(0)
+            if 'Program' not in loaded_monthly.columns:
+                loaded_monthly['Program'] = 'Default Program'
+            if 'Priority' not in loaded_monthly.columns:
+                loaded_monthly['Priority'] = 'Medium'
             st.session_state.monthly_assignments_df = loaded_monthly
         except Exception as e:
             st.error(f"Error refreshing: {str(e)}")
@@ -1193,6 +1817,10 @@ else:
         # Ensure proper data types
         monthly_df['Engineer Name'] = monthly_df['Engineer Name'].fillna('').astype(str)
         monthly_df['Allocation %'] = pd.to_numeric(monthly_df['Allocation %'], errors='coerce').fillna(0)
+        if 'Program' not in monthly_df.columns:
+            monthly_df['Program'] = 'Default Program'
+        if 'Priority' not in monthly_df.columns:
+            monthly_df['Priority'] = 'Medium'
         st.session_state.monthly_assignments_df = monthly_df
     except:
         monthly_df = default_monthly_assignments()
@@ -1304,6 +1932,38 @@ try:
                 else:
                     st.info("No availability details to show. Add monthly assignments to see the breakdown.")
             
+            # Add priority summary if Priority column exists
+            if 'Priority' in monthly_df.columns and not monthly_df.empty:
+                st.subheader("📊 Priority Summary")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                priority_counts = monthly_df['Priority'].value_counts()
+                
+                with col1:
+                    critical_count = priority_counts.get('Critical', 0)
+                    st.metric("🔴 Critical Tasks", critical_count)
+                
+                with col2:
+                    high_count = priority_counts.get('High', 0)
+                    st.metric("🟠 High Priority", high_count)
+                
+                with col3:
+                    medium_count = priority_counts.get('Medium', 0)
+                    st.metric("🟡 Medium Priority", medium_count)
+                
+                with col4:
+                    low_count = priority_counts.get('Low', 0)
+                    st.metric("🟢 Low Priority", low_count)
+                
+                # Show critical assignments if any
+                if critical_count > 0:
+                    with st.expander("⚠️ Critical Priority Assignments", expanded=True):
+                        critical_assignments = monthly_df[monthly_df['Priority'] == 'Critical'].sort_values(['Month', 'Engineer Name'])
+                        display_critical = critical_assignments[['Engineer Name', 'Program', 'Feature', 'Month', 'Allocation %']].copy()
+                        display_critical['Allocation %'] = display_critical['Allocation %'].apply(lambda x: f"{x}%")
+                        st.dataframe(display_critical, use_container_width=True, hide_index=True)
+            
             st.markdown("""
             **Status Indicators:**
             - Engineers are considered fully occupied at 85% allocation
@@ -1314,13 +1974,89 @@ try:
             - 🟡 Yellow: Low availability (1-20%)
             - 🔴 Red: No availability (0%)
             
+            **Priority Levels:**
+            - 🔴 Critical: Urgent/blocking tasks
+            - 🟠 High: Important tasks that need attention soon
+            - 🟡 Medium: Regular priority tasks
+            - 🟢 Low: Nice-to-have or future tasks
+            
             **Note:** PTO is calculated using monthly PTO values from the Engineer Management section
+            
+            **Fiscal Year Quarters (FY starts in August):**
+            - Q1: August - October (e.g., Aug 2025 = Q1 FY26)
+            - Q2: November - January
+            - Q3: February - April  
+            - Q4: May - July
             """)
         else:
             st.info("No utilization data available. Add engineers and monthly assignments to see utilization summary.")
 except Exception as e:
     st.error(f"Error generating utilization summary: {str(e)}")
     st.info("Please check your data and try again. If the problem persists, try refreshing the page or clearing your browser cache.")
+
+# ─────────────────────────────────────────────────────────────
+# Quarterly Charts Section
+# ─────────────────────────────────────────────────────────────
+
+st.header("📊 Quarterly Analysis")
+
+# Get the latest data
+monthly_df = st.session_state.monthly_assignments_df
+engineers_df = st.session_state.engineers_df
+
+# Generate quarterly availability chart
+quarterly_availability_fig = generate_quarterly_availability_chart(monthly_df, engineers_df)
+if quarterly_availability_fig:
+    st.plotly_chart(quarterly_availability_fig, use_container_width=True)
+else:
+    st.info("No data available for quarterly availability chart.")
+
+# Generate quarterly utilization charts
+program_fig, feature_fig, engineer_fig = generate_quarterly_utilization_charts(monthly_df, engineers_df)
+
+if program_fig:
+    st.plotly_chart(program_fig, use_container_width=True)
+
+if feature_fig:
+    st.plotly_chart(feature_fig, use_container_width=True)
+
+if engineer_fig:
+    st.plotly_chart(engineer_fig, use_container_width=True)
+
+# Add priority breakdown chart if Priority column exists
+if not monthly_df.empty and 'Priority' in monthly_df.columns:
+    # Create priority breakdown by quarter
+    monthly_df_with_quarter = monthly_df.copy()
+    monthly_df_with_quarter['Quarter'] = monthly_df_with_quarter['Month'].apply(get_fiscal_quarter)
+    
+    priority_quarterly = monthly_df_with_quarter.groupby(['Quarter', 'Priority'])['Allocation %'].sum().reset_index()
+    priority_quarterly['Allocation %'] = priority_quarterly['Allocation %'] / 3  # Average over quarter
+    
+    # Define priority order and colors
+    priority_order = ['Critical', 'High', 'Medium', 'Low']
+    priority_colors = {'Critical': '#FF4444', 'High': '#FF8800', 'Medium': '#FFBB00', 'Low': '#00CC00'}
+    
+    # Sort quarters chronologically
+    quarter_order = sort_quarters_chronologically(priority_quarterly['Quarter'].unique())
+    
+    fig_priority = px.bar(
+        priority_quarterly,
+        x='Quarter',
+        y='Allocation %',
+        color='Priority',
+        title='Quarterly Bandwidth Utilization by Priority',
+        labels={'Allocation %': 'Average Allocation %'},
+        text='Allocation %',
+        category_orders={'Priority': priority_order, 'Quarter': quarter_order},
+        color_discrete_map=priority_colors
+    )
+    fig_priority.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+    fig_priority.update_layout(height=500)
+    
+    st.plotly_chart(fig_priority, use_container_width=True)
+
+if not any([program_fig, feature_fig, engineer_fig]):
+    st.info("Add monthly assignments to see quarterly utilization charts by program, feature, and engineer.")
 
 # ─────────────────────────────────────────────────────────────
 # Future Projects Section
