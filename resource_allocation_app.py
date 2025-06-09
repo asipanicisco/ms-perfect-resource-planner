@@ -1068,7 +1068,7 @@ if not current_monthly_df.empty:
     st.subheader("All Monthly Assignments")
     
     # Add view options
-    view_mode = st.radio("View Mode:", ["By Engineer", "By Month", "All Assignments"], horizontal=True)
+    view_mode = st.radio("View Mode:", ["By Month", "By Engineer", "All Assignments"], horizontal=True)
     
     if view_mode == "By Engineer":
         # Group by engineer for better visualization
