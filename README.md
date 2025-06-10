@@ -1,4 +1,4 @@
-# MS Perfect Resources - Engineer Resource Allocation Tool
+# MS Perfect Team Planner - Engineer Resource Allocation Tool
 
 A Streamlit-based web application for managing engineer capacity, PTO (Paid Time Off), and monthly feature assignments with automatic utilization calculations.
 

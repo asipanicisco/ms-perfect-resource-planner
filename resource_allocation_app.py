@@ -11,8 +11,8 @@ import os
 # ─────────────────────────────────────────────────────────────
 # Streamlit Page Configuration
 # ─────────────────────────────────────────────────────────────
-st.set_page_config(page_title="MS Perfect Resources", layout="wide")
-st.title("MS Perfect Resources")
+st.set_page_config(page_title="MS Perfect Team Planning", layout="wide")
+st.title("MS Perfect Team Planning")
 
 # Check for AgGrid availability
 try:
@@ -25,22 +25,10 @@ except ImportError:
 
 # ─────────────────────────────────────────────────────────────
 # Helper Functions for Quarterly Calculations
-# Fiscal Year Convention: FY starts in August
-# Example: August 2025 = Q1 FY26, July 2025 = Q4 FY25
 # ─────────────────────────────────────────────────────────────
 
 def get_fiscal_quarter(month_str):
-    """Get fiscal quarter based on August start (Q1: Aug-Oct, Q2: Nov-Jan, Q3: Feb-Apr, Q4: May-Jul)
-    
-    Fiscal year starts in August, so:
-    - August 2025 through July 2026 = FY26
-    - August 2024 through July 2025 = FY25
-    
-    Examples:
-    - July 2025 = Q4 FY25
-    - August 2025 = Q1 FY26
-    - January 2026 = Q2 FY26
-    """
+    """Get fiscal quarter based on August start"""
     try:
         month_date = datetime.strptime(month_str, "%Y-%m")
         month = month_date.month
@@ -68,14 +56,7 @@ def get_fiscal_quarter(month_str):
         return "Unknown"
 
 def get_quarter_months(quarter_str):
-    """Get the months that belong to a specific quarter
-    
-    Since FY starts in August:
-    - Q1 FY26 = Aug-Oct 2025
-    - Q2 FY26 = Nov 2025 - Jan 2026
-    - Q3 FY26 = Feb-Apr 2026
-    - Q4 FY26 = May-Jul 2026
-    """
+    """Get the months that belong to a specific quarter"""
     # Extract year from quarter string (e.g., "Q1 FY2026" -> 2026)
     try:
         parts = quarter_str.split()
@@ -217,14 +198,14 @@ def generate_team_utilization_summary(monthly_df, engineers_df):
     
     # Add utilization bars
     fig.add_trace(go.Bar(
-        name='Average Team Utilization',
+        name='Team Utilization',
         x=metrics_df['Quarter'],
         y=metrics_df['Avg Team Utilization %'],
         yaxis='y',
         text=metrics_df['Avg Team Utilization %'].apply(lambda x: f"{x}%"),
         textposition='inside',
         marker_color='lightblue',
-        hovertemplate='%{x}<br>Team Utilization: %{y}%<extra></extra>'
+        hovertemplate='%{x}<br>Utilization: %{y}%<extra></extra>'
     ))
     
     fig.add_trace(go.Bar(
@@ -235,7 +216,7 @@ def generate_team_utilization_summary(monthly_df, engineers_df):
         text=metrics_df['Avg Effective Utilization %'].apply(lambda x: f"{x}%"),
         textposition='inside',
         marker_color='darkblue',
-        hovertemplate='%{x}<br>Effective Utilization: %{y}%<extra></extra>'
+        hovertemplate='%{x}<br>Effective: %{y}%<extra></extra>'
     ))
     
     # Add engineer count lines
@@ -357,7 +338,7 @@ def default_monthly_assignments():
 # ─────────────────────────────────────────────────────────────
 
 def generate_monthly_utilization_chart(monthly_df, engineers_df):
-    """Generate a quarterly summary of engineer utilization over time"""
+    """Generate a quarterly summary of engineer utilization"""
     
     # Get all engineers with valid names, handling different data types
     all_engineers = []
@@ -675,8 +656,7 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
                 'Quarter': quarter,
                 'Avg Available %': round(avg_available, 1),
                 'Avg Allocated %': round(avg_effective_allocated, 1),
-                'Total PTO Days': round(total_pto_days, 1),
-                'Has Assignments': months_with_assignments > 0
+                'Total PTO Days': round(total_pto_days, 1)
             })
     
     if not quarterly_data:
@@ -697,32 +677,9 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
             values='Avg Available %'
         )
         
-        # Create a second pivot for showing which quarters have partial data
-        has_assignments_pivot = quarterly_df.pivot(
-            index='Engineer',
-            columns='Quarter',
-            values='Has Assignments'
-        )
-        
         # Sort columns chronologically
         sorted_columns = sort_quarters_chronologically(pivot_data.columns.tolist())
         pivot_data = pivot_data[sorted_columns]
-        
-        # Create custom text with indicators for partial quarters
-        text_data = []
-        for i, engineer in enumerate(pivot_data.index):
-            row_text = []
-            for quarter in sorted_columns:
-                value = pivot_data.loc[engineer, quarter]
-                has_data = has_assignments_pivot.loc[engineer, quarter] if quarter in has_assignments_pivot.columns else False
-                if pd.notna(value):
-                    if has_data:
-                        row_text.append(f"{value:.1f}%")
-                    else:
-                        row_text.append(f"{value:.1f}%*")  # * indicates no assignments
-                else:
-                    row_text.append("")
-            text_data.append(row_text)
         
         # Create heatmap
         fig = go.Figure(data=go.Heatmap(
@@ -740,7 +697,7 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
         ))
         
         fig.update_layout(
-            title=f"Quarterly Bandwidth Availability by Engineer (Based on Assigned Months) - Heatmap View ({num_engineers} engineers)",
+            title=f"Quarterly Bandwidth Availability by Engineer - Heatmap View ({num_engineers} engineers)",
             xaxis_title="Fiscal Quarter",
             yaxis_title="Engineer",
             height=max(600, 30 * num_engineers),  # Dynamic height
@@ -762,14 +719,14 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
                 y=engineer_data['Avg Available %'].tolist(),
                 text=engineer_data['Avg Available %'].apply(lambda x: f"{x}%"),
                 textposition='auto',
-                hovertemplate='%{x}<br>Available: %{y}%<br>Engineer: ' + engineer + '<br><i>Based on months with assignments</i><extra></extra>'
+                hovertemplate='%{x}<br>Available: %{y}%<br>Engineer: ' + engineer + '<extra></extra>'
             ))
         
         # Dynamic height based on number of engineers
         chart_height = max(500, 500 + (num_engineers // 10) * 50)
         
         fig.update_layout(
-            title="Quarterly Bandwidth Availability by Engineer (Based on Assigned Months)",
+            title="Quarterly Bandwidth Availability by Engineer",
             xaxis_title="Fiscal Quarter",
             yaxis_title="Average Available Bandwidth %",
             barmode='group',
@@ -789,76 +746,8 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
     return fig
 
 def generate_quarterly_utilization_charts(monthly_df, engineers_df):
-    """Generate quarterly utilization charts by program and feature"""
-    
-    if monthly_df.empty:
-        return None, None
-    
-    # Generate months for next 12 months
-    current_date = datetime.now()
-    months = []
-    for i in range(12):
-        month_date = current_date + timedelta(days=30*i)
-        months.append(month_date.strftime("%Y-%m"))
-    
-    # Filter monthly_df to only include these months
-    monthly_df_filtered = monthly_df[monthly_df['Month'].isin(months)]
-    
-    if monthly_df_filtered.empty:
-        return None, None
-    
-    # Add Quarter column
-    monthly_df_filtered['Quarter'] = monthly_df_filtered['Month'].apply(get_fiscal_quarter)
-    
-    # 1. Utilization by Program
-    program_data = []
-    if 'Program' in monthly_df_filtered.columns:
-        program_quarterly = monthly_df_filtered.groupby(['Quarter', 'Program'])['Allocation %'].sum().reset_index()
-        program_quarterly['Allocation %'] = program_quarterly['Allocation %'] / 3  # Average over quarter
-        
-        # Sort quarters chronologically
-        quarter_order = sort_quarters_chronologically(program_quarterly['Quarter'].unique())
-        
-        fig_program = px.bar(
-            program_quarterly,
-            x='Quarter',
-            y='Allocation %',
-            color='Program',
-            title='Quarterly Bandwidth Utilization by Program',
-            labels={'Allocation %': 'Average Allocation %'},
-            text='Allocation %',
-            category_orders={'Quarter': quarter_order}
-        )
-        fig_program.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-        fig_program.update_layout(height=500)
-    else:
-        fig_program = None
-    
-    # 2. Utilization by Feature
-    feature_quarterly = monthly_df_filtered.groupby(['Quarter', 'Feature'])['Allocation %'].sum().reset_index()
-    feature_quarterly['Allocation %'] = feature_quarterly['Allocation %'] / 3  # Average over quarter
-    
-    # Get top 10 features by allocation
-    top_features = feature_quarterly.groupby('Feature')['Allocation %'].sum().nlargest(10).index.tolist()
-    feature_quarterly_top = feature_quarterly[feature_quarterly['Feature'].isin(top_features)]
-    
-    # Sort quarters chronologically
-    quarter_order = sort_quarters_chronologically(feature_quarterly_top['Quarter'].unique())
-    
-    fig_feature = px.bar(
-        feature_quarterly_top,
-        x='Quarter',
-        y='Allocation %',
-        color='Feature',
-        title='Quarterly Bandwidth Utilization by Top Features',
-        labels={'Allocation %': 'Average Allocation %'},
-        text='Allocation %',
-        category_orders={'Quarter': quarter_order}
-    )
-    fig_feature.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-    fig_feature.update_layout(height=500)
-    
-    return fig_program, fig_feature
+    """DEPRECATED - Kept for backward compatibility only."""
+    return None, None
 
 def create_monthly_assignment_matrix(engineers_df, features, num_months=6):
     """Create a matrix view for monthly assignments"""
@@ -912,7 +801,7 @@ def generate_program_feature_quarterly_trends(monthly_df):
     # 1. Program trend over quarters
     if 'Program' in monthly_df_filtered.columns:
         program_quarterly = monthly_df_filtered.groupby(['Quarter', 'Program'])['Allocation %'].sum().reset_index()
-        # Average over 3 months per quarter
+        # Calculate average per month in quarter (divide by 3 months)
         program_quarterly['Allocation %'] = program_quarterly['Allocation %'] / 3
         
         # Create pivot for line chart
@@ -933,13 +822,13 @@ def generate_program_feature_quarterly_trends(monthly_df):
                 name=program,
                 line=dict(width=3),
                 marker=dict(size=10),
-                hovertemplate='%{x}<br>%{y:.1f}% allocated<br>Program: ' + program + '<extra></extra>'
+                hovertemplate='%{x}<br>%{y:.1f}%<br>Program: ' + program + '<extra></extra>'
             ))
         
         fig_program_trend.update_layout(
             title="Quarterly Program Allocation Trends",
             xaxis_title="Fiscal Quarter",
-            yaxis_title="Average Allocation %",
+            yaxis_title="Allocation %",
             height=500,
             showlegend=True
         )
@@ -948,6 +837,7 @@ def generate_program_feature_quarterly_trends(monthly_df):
     
     # 2. Top features trend over quarters
     feature_quarterly = monthly_df_filtered.groupby(['Quarter', 'Feature'])['Allocation %'].sum().reset_index()
+    # Calculate average per month in quarter (divide by 3 months)
     feature_quarterly['Allocation %'] = feature_quarterly['Allocation %'] / 3
     
     # Get top 8 features by total allocation
@@ -972,7 +862,7 @@ def generate_program_feature_quarterly_trends(monthly_df):
             name=feature,
             line=dict(width=2),
             marker=dict(size=8),
-            hovertemplate='%{x}<br>%{y:.1f}% allocated<br>Feature: ' + feature + '<extra></extra>'
+            hovertemplate='%{x}<br>%{y:.1f}%<br>Feature: ' + feature + '<extra></extra>'
         ))
     
     fig_feature_trend.update_layout(
@@ -2119,7 +2009,7 @@ else:
 # Quarterly Utilization Summary
 # ─────────────────────────────────────────────────────────────
 
-st.header("📊 Quarterly Engineer Utilization Summary")
+st.header("📊 Engineer Utilization Summary")
 
 # Add manual refresh button
 col1, col2 = st.columns([10, 2])
@@ -2190,7 +2080,7 @@ try:
         availability_summary, availability_details = generate_monthly_utilization_chart(monthly_df, engineers_df)
         
         if availability_summary is not None and not availability_summary.empty:
-            st.subheader("Quarterly Engineer Availability Overview")
+            st.subheader("Engineer Availability Overview")
             
             # Color-code the availability summary
             def color_status(val):
@@ -2293,17 +2183,19 @@ try:
             
             # Add priority summary if Priority column exists
             if 'Priority' in monthly_df.columns and not monthly_df.empty:
-                st.subheader("📊 Quarterly Priority Summary")
+                st.subheader("📊 Priority Summary")
                 
                 # Get current quarter data
                 current_date = datetime.now()
                 current_month = current_date.strftime("%Y-%m")
-                current_quarter = get_fiscal_quarter(current_month)
+                current_quarter_calc = get_fiscal_quarter(current_month)
                 
                 # Filter data for current quarter
                 monthly_df_with_quarter = monthly_df.copy()
                 monthly_df_with_quarter['Quarter'] = monthly_df_with_quarter['Month'].apply(get_fiscal_quarter)
-                current_quarter_data = monthly_df_with_quarter[monthly_df_with_quarter['Quarter'] == current_quarter]
+                current_quarter_data = monthly_df_with_quarter[monthly_df_with_quarter['Quarter'] == current_quarter_calc]
+                
+                st.write(f"**Current Quarter: {current_quarter_calc}**")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 
@@ -2312,57 +2204,41 @@ try:
                     
                     with col1:
                         critical_count = priority_counts.get('Critical', 0)
-                        st.metric(f"🔴 Critical Tasks ({current_quarter})", critical_count)
+                        st.metric(f"🔴 Critical", critical_count)
                     
                     with col2:
                         high_count = priority_counts.get('High', 0)
-                        st.metric(f"🟠 High Priority ({current_quarter})", high_count)
+                        st.metric(f"🟠 High", high_count)
                     
                     with col3:
                         medium_count = priority_counts.get('Medium', 0)
-                        st.metric(f"🟡 Medium Priority ({current_quarter})", medium_count)
+                        st.metric(f"🟡 Medium", medium_count)
                     
                     with col4:
                         low_count = priority_counts.get('Low', 0)
-                        st.metric(f"🟢 Low Priority ({current_quarter})", low_count)
+                        st.metric(f"🟢 Low", low_count)
                     
                     # Show critical assignments if any
                     if critical_count > 0:
-                        with st.expander(f"⚠️ Critical Priority Assignments for {current_quarter}", expanded=True):
+                        with st.expander(f"⚠️ Critical Priority Assignments in {current_quarter_calc}", expanded=True):
                             critical_assignments = current_quarter_data[current_quarter_data['Priority'] == 'Critical'].sort_values(['Month', 'Engineer Name'])
                             display_critical = critical_assignments[['Engineer Name', 'Program', 'Feature', 'Month', 'Allocation %']].copy()
                             display_critical['Allocation %'] = display_critical['Allocation %'].apply(lambda x: f"{x}%")
                             st.dataframe(display_critical, use_container_width=True, hide_index=True)
                 else:
-                    st.info(f"No assignments found for {current_quarter}")
+                    st.info(f"No assignments found for {current_quarter_calc}")
             
             st.markdown("""
-            **Status Indicators:**
-            - Engineers are considered fully occupied at 85% allocation
-            - Over-allocation occurs above 100%
-            
-            **Availability Colors:**
-            - 🟢 Green: Good availability (>20%)
-            - 🟡 Yellow: Low availability (1-20%)
-            - 🔴 Red: No availability (0%)
+            **Key Information:**
+            - 🔴 Over-allocated: >100% utilization
+            - 🟠 Fully occupied: 85-100% utilization  
+            - 🟢 Available: <85% utilization
             
             **Priority Levels:**
             - 🔴 Critical: Urgent/blocking tasks
-            - 🟠 High: Important tasks that need attention soon
+            - 🟠 High: Important tasks needing attention soon
             - 🟡 Medium: Regular priority tasks
             - 🟢 Low: Nice-to-have or future tasks
-            
-            **Calculation Method:**
-            - Quarterly averages are based only on months where engineers have assignments
-            - If an engineer has 30% allocation in August only, Q1 shows 30% utilization (70% available)
-            - Empty months are not included in the average calculation
-            - PTO is always factored into the calculations
-            
-            **Fiscal Year Quarters (FY starts in August):**
-            - Q1: August - October (e.g., Aug 2025 = Q1 FY26)
-            - Q2: November - January
-            - Q3: February - April  
-            - Q4: May - July
             """)
         else:
             st.info("No utilization data available. Add engineers and monthly assignments to see quarterly utilization summary.")
@@ -2377,12 +2253,7 @@ except Exception as e:
 st.header("📊 Quarterly Analysis")
 
 # Note about chart display
-st.info("""📌 Note: Quarterly calculations work as follows:
-- If an engineer has assignments in only some months of a quarter, the average is calculated ONLY for those months
-- Example: 30% allocation in August only = Q1 shows 30% utilization (70% available), not 10% utilization
-- Months without assignments are excluded from averaging to reflect actual workload
-- The heatmap shows '*' for quarters where an engineer has no assignments (100% available)
-- All values are PTO-adjusted""")
+st.info("📌 Engineer charts automatically switch to heatmap view when there are more than 15 engineers for better readability.")
 
 # Get the latest data
 monthly_df = st.session_state.monthly_assignments_df
@@ -2400,44 +2271,242 @@ if not monthly_df.empty and not engineers_df.empty:
         month_date = current_date + timedelta(days=30*i)
         all_months.append(month_date.strftime("%Y-%m"))
     
-    current_quarter_months = []
-    for month in all_months[:3]:  # Check first 3 months to find current quarter
-        if get_fiscal_quarter(month) == current_quarter:
-            current_quarter_months.append(month)
+    current_quarter_months = get_quarter_months(current_quarter)
+    
+    # Filter for current quarter
+    monthly_df_temp = monthly_df.copy()
+    monthly_df_temp['Quarter'] = monthly_df_temp['Month'].apply(get_fiscal_quarter)
+    current_quarter_data = monthly_df_temp[monthly_df_temp['Quarter'] == current_quarter]
     
     # Calculate metrics
-    if current_quarter_months:
-        current_quarter_data = monthly_df[monthly_df['Month'].isin(current_quarter_months)]
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Current Quarter", current_quarter)
-        
-        with col2:
-            total_assignments = len(current_quarter_data)
-            st.metric("Assignments This Quarter", total_assignments)
-        
-        with col3:
-            if 'Program' in current_quarter_data.columns:
-                active_programs = current_quarter_data['Program'].nunique()
-                st.metric("Active Programs", active_programs)
-            else:
-                st.metric("Active Programs", "N/A")
-        
-        with col4:
-            if 'Priority' in current_quarter_data.columns:
-                critical_high = len(current_quarter_data[current_quarter_data['Priority'].isin(['Critical', 'High'])])
-                st.metric("Critical/High Priority", critical_high)
-            else:
-                st.metric("Critical/High Priority", "N/A")
-        
-        st.divider()
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Current Quarter", current_quarter)
+    
+    with col2:
+        total_assignments = len(current_quarter_data)
+        st.metric("Assignments This Quarter", total_assignments)
+    
+    with col3:
+        if 'Program' in current_quarter_data.columns:
+            active_programs = current_quarter_data['Program'].nunique()
+            st.metric("Active Programs", active_programs)
+        else:
+            st.metric("Active Programs", "N/A")
+    
+    with col4:
+        if 'Priority' in current_quarter_data.columns:
+            critical_high = len(current_quarter_data[current_quarter_data['Priority'].isin(['Critical', 'High'])])
+            st.metric("Critical/High Priority", critical_high)
+        else:
+            st.metric("Critical/High Priority", "N/A")
+    
+    st.divider()
 
 # Tab organization for quarterly views
-quarterly_tab1, quarterly_tab2, quarterly_tab3 = st.tabs(["📈 Trends Over Time", "📊 Current Quarter Distribution", "👥 Engineer Availability"])
+quarterly_tab1, quarterly_tab2, quarterly_tab3 = st.tabs(["👥 Engineer Availability", "📊 Quarterly Distribution", "📈 Trends Over Time"])
 
 with quarterly_tab1:
+    st.subheader("Engineer Availability by Quarter")
+    
+    # Generate quarterly availability chart
+    quarterly_availability_fig = generate_quarterly_availability_chart(monthly_df, engineers_df)
+    if quarterly_availability_fig:
+        st.plotly_chart(quarterly_availability_fig, use_container_width=True)
+    else:
+        st.info("No data available for quarterly availability chart.")
+
+with quarterly_tab2:
+    st.subheader("Quarterly Allocation Distribution")
+    
+    st.info("📊 Showing total sum of allocations per quarter")
+    
+    # Generate quarterly data for all quarters
+    if not monthly_df.empty:
+        # Add quarter column
+        monthly_df_with_quarter = monthly_df.copy()
+        monthly_df_with_quarter['Quarter'] = monthly_df_with_quarter['Month'].apply(get_fiscal_quarter)
+        
+        # Get all unique quarters
+        all_quarters = monthly_df_with_quarter['Quarter'].unique()
+        sorted_quarters = sort_quarters_chronologically(all_quarters.tolist())
+        
+        if len(sorted_quarters) > 0:
+            # 1. Allocation by Program across all quarters
+            if 'Program' in monthly_df_with_quarter.columns:
+                st.subheader("Total Allocation by Program per Quarter")
+                
+                # Calculate total allocation for each program/quarter
+                program_quarterly = monthly_df_with_quarter.groupby(['Quarter', 'Program'])['Allocation %'].sum().reset_index()
+                program_quarterly.rename(columns={'Allocation %': 'Total Allocation %'}, inplace=True)
+                
+                # Create pivot for side-by-side comparison
+                program_pivot = program_quarterly.pivot(index='Program', columns='Quarter', values='Total Allocation %').fillna(0)
+                program_pivot = program_pivot[sorted_quarters]  # Ensure proper quarter order
+                
+                # Create grouped bar chart
+                fig_program = go.Figure()
+                for quarter in sorted_quarters:
+                    if quarter in program_pivot.columns:
+                        fig_program.add_trace(go.Bar(
+                            name=quarter,
+                            x=program_pivot.index,
+                            y=program_pivot[quarter],
+                            text=program_pivot[quarter].apply(lambda x: f"{x:.1f}%"),
+                            textposition='auto',
+                        ))
+                
+                fig_program.update_layout(
+                    title='Total Allocation by Program per Quarter',
+                    xaxis_title='Program',
+                    yaxis_title='Total Allocation %',
+                    barmode='group',
+                    height=500
+                )
+                st.plotly_chart(fig_program, use_container_width=True)
+            
+            # 2. Allocation by Top Features across all quarters
+            st.subheader("Total Allocation by Top Features per Quarter")
+            
+            # Get top features based on total allocation across all quarters
+            feature_totals = monthly_df_with_quarter.groupby('Feature')['Allocation %'].sum()
+            top_features = feature_totals.nlargest(8).index.tolist()
+            
+            # Filter for top features
+            feature_quarterly = monthly_df_with_quarter[monthly_df_with_quarter['Feature'].isin(top_features)]
+            feature_quarterly = feature_quarterly.groupby(['Quarter', 'Feature'])['Allocation %'].sum().reset_index()
+            feature_quarterly.rename(columns={'Allocation %': 'Total Allocation %'}, inplace=True)
+            
+            # Create pivot
+            feature_pivot = feature_quarterly.pivot(index='Feature', columns='Quarter', values='Total Allocation %').fillna(0)
+            feature_pivot = feature_pivot[sorted_quarters]  # Ensure proper quarter order
+            
+            # Create grouped bar chart
+            fig_feature = go.Figure()
+            for quarter in sorted_quarters:
+                if quarter in feature_pivot.columns:
+                    fig_feature.add_trace(go.Bar(
+                        name=quarter,
+                        x=feature_pivot.index,
+                        y=feature_pivot[quarter],
+                        text=feature_pivot[quarter].apply(lambda x: f"{x:.1f}%"),
+                        textposition='auto',
+                    ))
+            
+            fig_feature.update_layout(
+                title='Total Allocation by Top Features per Quarter',
+                xaxis_title='Feature',
+                yaxis_title='Total Allocation %',
+                barmode='group',
+                height=500,
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig_feature, use_container_width=True)
+            
+            # 3. Allocation by Priority across all quarters
+            if 'Priority' in monthly_df_with_quarter.columns:
+                st.subheader("Total Allocation by Priority per Quarter")
+                
+                priority_quarterly = monthly_df_with_quarter.groupby(['Quarter', 'Priority'])['Allocation %'].sum().reset_index()
+                priority_quarterly.rename(columns={'Allocation %': 'Total Allocation %'}, inplace=True)
+                
+                # Create pivot
+                priority_order = ['Critical', 'High', 'Medium', 'Low']
+                priority_pivot = priority_quarterly.pivot(index='Priority', columns='Quarter', values='Total Allocation %').fillna(0)
+                priority_pivot = priority_pivot.reindex(priority_order, fill_value=0)  # Ensure priority order
+                priority_pivot = priority_pivot[sorted_quarters]  # Ensure proper quarter order
+                
+                # Create grouped bar chart
+                fig_priority = go.Figure()
+                priority_colors = {'Critical': '#FF4444', 'High': '#FF8800', 'Medium': '#FFBB00', 'Low': '#00CC00'}
+                
+                for quarter in sorted_quarters:
+                    if quarter in priority_pivot.columns:
+                        fig_priority.add_trace(go.Bar(
+                            name=quarter,
+                            x=priority_pivot.index,
+                            y=priority_pivot[quarter],
+                            text=priority_pivot[quarter].apply(lambda x: f"{x:.1f}%"),
+                            textposition='auto',
+                        ))
+                
+                fig_priority.update_layout(
+                    title='Total Allocation by Priority per Quarter',
+                    xaxis_title='Priority',
+                    yaxis_title='Total Allocation %',
+                    barmode='group',
+                    height=500
+                )
+                st.plotly_chart(fig_priority, use_container_width=True)
+            
+            # 4. Allocation by Engineer across all quarters
+            st.subheader("Total Allocation by Engineer per Quarter")
+            
+            # Calculate total allocation per engineer per quarter
+            engineer_quarterly = monthly_df_with_quarter.groupby(['Quarter', 'Engineer Name'])['Allocation %'].sum().reset_index()
+            engineer_quarterly.rename(columns={'Allocation %': 'Total Allocation %'}, inplace=True)
+            
+            # For better visualization, show top 15 engineers by total allocation
+            engineer_totals = engineer_quarterly.groupby('Engineer Name')['Total Allocation %'].sum()
+            top_engineers = engineer_totals.nlargest(15).index.tolist()
+            
+            # Filter for top engineers
+            engineer_quarterly_top = engineer_quarterly[engineer_quarterly['Engineer Name'].isin(top_engineers)]
+            
+            # Create pivot
+            engineer_pivot = engineer_quarterly_top.pivot(index='Engineer Name', columns='Quarter', values='Total Allocation %').fillna(0)
+            engineer_pivot = engineer_pivot[sorted_quarters]  # Ensure proper quarter order
+            
+            # Sort engineers by their total allocation
+            engineer_pivot['total'] = engineer_pivot.sum(axis=1)
+            engineer_pivot = engineer_pivot.sort_values('total', ascending=False).drop('total', axis=1)
+            
+            # Create grouped bar chart
+            fig_engineer = go.Figure()
+            for quarter in sorted_quarters:
+                if quarter in engineer_pivot.columns:
+                    fig_engineer.add_trace(go.Bar(
+                        name=quarter,
+                        x=engineer_pivot.index,
+                        y=engineer_pivot[quarter],
+                        text=engineer_pivot[quarter].apply(lambda x: f"{x:.1f}%"),
+                        textposition='auto',
+                    ))
+            
+            fig_engineer.update_layout(
+                title='Total Allocation by Top 15 Engineers per Quarter',
+                xaxis_title='Engineer',
+                yaxis_title='Total Allocation %',
+                barmode='group',
+                height=600,
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig_engineer, use_container_width=True)
+            
+            # Show summary metrics
+            st.subheader("Quarterly Summary Metrics")
+            
+            # Create metrics for each quarter
+            cols = st.columns(min(len(sorted_quarters), 4))
+            for idx, quarter in enumerate(sorted_quarters[:4]):  # Show max 4 quarters
+                quarter_data = monthly_df_with_quarter[monthly_df_with_quarter['Quarter'] == quarter]
+                
+                with cols[idx % 4]:
+                    st.write(f"**{quarter}**")
+                    total_assignments = len(quarter_data)
+                    unique_engineers = quarter_data['Engineer Name'].nunique()
+                    total_allocation = quarter_data['Allocation %'].sum()  # Total sum
+                    
+                    st.metric("Assignments", total_assignments)
+                    st.metric("Active Engineers", unique_engineers)
+                    st.metric("Total Allocation", f"{total_allocation:.1f}%")
+        else:
+            st.info("No quarterly data available")
+    else:
+        st.info("Add monthly assignments to see quarterly distribution.")
+
+with quarterly_tab3:
     st.subheader("Quarterly Trends Analysis")
     
     # Team utilization summary
@@ -2459,63 +2528,6 @@ with quarterly_tab1:
         st.plotly_chart(feature_trend_fig, use_container_width=True)
     else:
         st.info("No feature data available for trend analysis.")
-
-with quarterly_tab2:
-    st.subheader("Current Quarter Allocation Distribution")
-    
-    # Generate quarterly utilization charts
-    program_fig, feature_fig = generate_quarterly_utilization_charts(monthly_df, engineers_df)
-    
-    if program_fig:
-        st.plotly_chart(program_fig, use_container_width=True)
-    
-    if feature_fig:
-        st.plotly_chart(feature_fig, use_container_width=True)
-    
-    # Add priority breakdown chart if Priority column exists
-    if not monthly_df.empty and 'Priority' in monthly_df.columns:
-        # Create priority breakdown by quarter
-        monthly_df_with_quarter = monthly_df.copy()
-        monthly_df_with_quarter['Quarter'] = monthly_df_with_quarter['Month'].apply(get_fiscal_quarter)
-        
-        priority_quarterly = monthly_df_with_quarter.groupby(['Quarter', 'Priority'])['Allocation %'].sum().reset_index()
-        priority_quarterly['Allocation %'] = priority_quarterly['Allocation %'] / 3  # Average over quarter
-        
-        # Define priority order and colors
-        priority_order = ['Critical', 'High', 'Medium', 'Low']
-        priority_colors = {'Critical': '#FF4444', 'High': '#FF8800', 'Medium': '#FFBB00', 'Low': '#00CC00'}
-        
-        # Sort quarters chronologically
-        quarter_order = sort_quarters_chronologically(priority_quarterly['Quarter'].unique())
-        
-        fig_priority = px.bar(
-            priority_quarterly,
-            x='Quarter',
-            y='Allocation %',
-            color='Priority',
-            title='Quarterly Bandwidth Utilization by Priority',
-            labels={'Allocation %': 'Average Allocation %'},
-            text='Allocation %',
-            category_orders={'Priority': priority_order, 'Quarter': quarter_order},
-            color_discrete_map=priority_colors
-        )
-        fig_priority.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-        fig_priority.update_layout(height=500)
-        
-        st.plotly_chart(fig_priority, use_container_width=True)
-    
-    if not any([program_fig, feature_fig]):
-        st.info("Add monthly assignments to see quarterly utilization charts by program and feature.")
-
-with quarterly_tab3:
-    st.subheader("Engineer Availability by Quarter")
-    
-    # Generate quarterly availability chart
-    quarterly_availability_fig = generate_quarterly_availability_chart(monthly_df, engineers_df)
-    if quarterly_availability_fig:
-        st.plotly_chart(quarterly_availability_fig, use_container_width=True)
-    else:
-        st.info("No data available for quarterly availability chart.")
 
 # ─────────────────────────────────────────────────────────────
 # Future Projects Section
