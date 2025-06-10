@@ -449,9 +449,11 @@ def generate_monthly_utilization_chart(monthly_df, engineers_df):
                 avg_pto_days = total_pto_days / len(quarter_months)
                 avg_working_days_ratio = avg_working_days / 22 if avg_working_days > 0 else 1
                 
-                # Calculate effective allocation and availability
-                effective_allocation = avg_allocation / avg_working_days_ratio if avg_working_days_ratio > 0 else avg_allocation
-                available_capacity = max(0, 100 - effective_allocation)
+                # FIXED: Allocation percentage stays the same regardless of PTO
+                effective_allocation = avg_allocation
+                # Available capacity considers both allocation and PTO impact
+                effective_capacity = 100 * avg_working_days_ratio
+                available_capacity = max(0, effective_capacity - effective_allocation)
                 
                 # Format features for display (showing average per month with assignment)
                 features_list = [f"{feat} ({all_features[feat]/months_with_data:.1f}%)" for feat in sorted(all_features.keys())]
@@ -462,7 +464,7 @@ def generate_monthly_utilization_chart(monthly_df, engineers_df):
                 avg_pto_days = total_pto_days / len(quarter_months) if len(quarter_months) > 0 else 0
                 avg_working_days_ratio = avg_working_days / 22 if avg_working_days > 0 else 1
                 effective_allocation = 0
-                available_capacity = 100
+                available_capacity = 100 * avg_working_days_ratio
                 features_list = []
             
             utilization_data.append({
@@ -560,8 +562,14 @@ def generate_monthly_utilization_chart(monthly_df, engineers_df):
     
     return summary_df, availability_df
 
-def generate_quarterly_availability_chart(monthly_df, engineers_df):
-    """Generate quarterly bandwidth availability chart per engineer"""
+def generate_quarterly_availability_chart(monthly_df, engineers_df, show_allocation=False):
+    """Generate quarterly bandwidth availability or allocation chart per engineer
+    
+    Args:
+        monthly_df: Monthly assignments dataframe
+        engineers_df: Engineers dataframe
+        show_allocation: If True, show allocation %; if False, show availability %
+    """
     
     # Get all valid engineers
     all_engineers = []
@@ -592,9 +600,8 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
     
     for quarter, quarter_months in quarters.items():
         for engineer in all_engineers:
-            total_available = 0
-            total_allocated = 0
-            total_effective_allocated = 0
+            total_allocation = 0
+            total_effective_allocation = 0
             total_working_days = 0
             total_pto_days = 0
             months_with_assignments = 0
@@ -626,30 +633,35 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
                 effective_working_days = max(0, working_days_in_month - pto_days)
                 working_days_ratio = effective_working_days / working_days_in_month if working_days_in_month > 0 else 1
                 
-                # Calculate for the month
-                effective_allocation = month_allocation * working_days_ratio
-                available_capacity = max(0, 100 - effective_allocation)
+                # Only accumulate if there's assignment
+                if has_assignment:
+                    total_allocation += month_allocation
+                    # FIXED: Don't inflate allocation based on PTO - allocation stays the same
+                    total_effective_allocation += month_allocation
                 
-                # Only count months with assignments for allocation averaging
-                if has_assignment or pto_days > 0:  # Count month if there's assignment OR PTO
-                    total_available += available_capacity
-                    total_allocated += month_allocation
-                    total_effective_allocated += effective_allocation
-                    total_working_days += effective_working_days
-                    total_pto_days += pto_days
+                total_working_days += effective_working_days
+                total_pto_days += pto_days
             
-            # Average over months that have data (assignments or PTO)
-            if months_with_assignments > 0 or total_pto_days > 0:
-                # If engineer has assignments or PTO in the quarter
-                num_months_to_average = max(months_with_assignments, 1)  # At least 1 to avoid division by zero
-                avg_available = total_available / num_months_to_average
-                avg_allocated = total_allocated / num_months_to_average
-                avg_effective_allocated = total_effective_allocated / num_months_to_average
+            # Calculate averages correctly
+            if months_with_assignments > 0:
+                # Average allocation only over months with assignments
+                avg_allocated = total_allocation / months_with_assignments
+                avg_effective_allocated = total_effective_allocation / months_with_assignments
             else:
-                # No assignments or PTO in this quarter - fully available
-                avg_available = 100
+                # No assignments in this quarter
                 avg_allocated = 0
                 avg_effective_allocated = 0
+            
+            # Calculate availability - Cap at 100%
+            # For availability calculation, we need to consider PTO impact
+            # If someone has PTO, their effective availability is reduced
+            if months_with_assignments > 0 or total_pto_days > 0:
+                avg_working_days_ratio = total_working_days / (len(quarter_months) * 22)
+                # Availability is reduced by both allocation and PTO
+                effective_capacity = 100 * avg_working_days_ratio
+                avg_available = min(100, max(0, effective_capacity - avg_effective_allocated))
+            else:
+                avg_available = min(100, max(0, 100 - avg_effective_allocated))
             
             quarterly_data.append({
                 'Engineer': engineer,
@@ -668,18 +680,29 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
     all_engineers_sorted = sorted(all_engineers)
     num_engineers = len(all_engineers_sorted)
     
-    # If too many engineers, use a heatmap instead
+    # Determine which metric to show
+    value_column = 'Avg Allocated %' if show_allocation else 'Avg Available %'
+    chart_title_suffix = "Allocation" if show_allocation else "Availability"
+    colorbar_title = "Allocated %<br>(After PTO)" if show_allocation else "Available %<br>(After PTO)"
+    
+    # If too many engineers, use a heatmap
     if num_engineers > 15:
         # Create pivot table for heatmap
         pivot_data = quarterly_df.pivot(
             index='Engineer',
             columns='Quarter',
-            values='Avg Available %'
+            values=value_column
         )
         
         # Sort columns chronologically
         sorted_columns = sort_quarters_chronologically(pivot_data.columns.tolist())
         pivot_data = pivot_data[sorted_columns]
+        
+        # Choose appropriate colorscale based on what we're showing
+        if show_allocation:
+            colorscale = 'Reds'  # Red for high allocation
+        else:
+            colorscale = 'RdYlGn'  # Green for high availability, red for low
         
         # Create heatmap
         fig = go.Figure(data=go.Heatmap(
@@ -689,15 +712,15 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
             text=pivot_data.values,
             texttemplate='%{text:.1f}%',
             textfont={"size": 10},
-            colorscale='RdYlGn',  # Green for high availability, red for low
+            colorscale=colorscale,
             colorbar=dict(
-                title="Available %<br>(After PTO)"
+                title=colorbar_title
             ),
-            hovertemplate='Engineer: %{y}<br>Quarter: %{x}<br>Available (After PTO): %{z:.1f}%<extra></extra>'
+            hovertemplate=f'Engineer: %{{y}}<br>Quarter: %{{x}}<br>{chart_title_suffix}: %{{z:.1f}}%<extra></extra>'
         ))
         
         fig.update_layout(
-            title=f"Quarterly Bandwidth Availability by Engineer - Heatmap View ({num_engineers} engineers)",
+            title=f"Quarterly {chart_title_suffix} by Engineer - Heatmap View ({num_engineers} engineers)",
             xaxis_title="Fiscal Quarter",
             yaxis_title="Engineer",
             height=max(600, 30 * num_engineers),  # Dynamic height
@@ -713,22 +736,32 @@ def generate_quarterly_availability_chart(monthly_df, engineers_df):
         for engineer in all_engineers_sorted:
             engineer_data = quarterly_df[quarterly_df['Engineer'] == engineer]
             
+            # Prepare data for all quarters (fill missing with appropriate default)
+            y_values = []
+            for q in sorted_quarters:
+                q_data = engineer_data[engineer_data['Quarter'] == q]
+                if not q_data.empty:
+                    y_values.append(q_data[value_column].iloc[0])
+                else:
+                    # Default to 100% available or 0% allocated if no data
+                    y_values.append(0 if show_allocation else 100)
+            
             fig.add_trace(go.Bar(
                 name=engineer,
                 x=sorted_quarters,
-                y=engineer_data['Avg Available %'].tolist(),
-                text=engineer_data['Avg Available %'].apply(lambda x: f"{x}%"),
+                y=y_values,
+                text=[f"{v}%" for v in y_values],
                 textposition='auto',
-                hovertemplate='%{x}<br>Available: %{y}%<br>Engineer: ' + engineer + '<extra></extra>'
+                hovertemplate=f'%{{x}}<br>{chart_title_suffix}: %{{y}}%<br>Engineer: ' + engineer + '<extra></extra>'
             ))
         
         # Dynamic height based on number of engineers
         chart_height = max(500, 500 + (num_engineers // 10) * 50)
         
         fig.update_layout(
-            title="Quarterly Bandwidth Availability by Engineer",
+            title=f"Quarterly {chart_title_suffix} by Engineer",
             xaxis_title="Fiscal Quarter",
-            yaxis_title="Average Available Bandwidth %",
+            yaxis_title=f"{chart_title_suffix} %",
             barmode='group',
             height=chart_height,
             showlegend=True,
@@ -1884,7 +1917,7 @@ if not current_monthly_df.empty:
             st.info(f"Showing {len(filtered_df)} Critical/High priority assignments")
     
     # Add view options
-    view_mode = st.radio("View Mode:", ["By Program", "By Engineer", "By Month", "All Assignments"], horizontal=True)
+    view_mode = st.radio("View Mode:", ["By Engineer", "By Month", "By Program", "All Assignments"], horizontal=True)
     
     if view_mode == "By Engineer":
         # Group by engineer for better visualization
@@ -2252,6 +2285,15 @@ except Exception as e:
 
 st.header("📊 Quarterly Analysis")
 
+# Add toggle for availability vs allocation view
+chart_mode = st.radio(
+    "View Mode:", 
+    ["Show Availability %", "Show Allocation %"], 
+    horizontal=True,
+    help="Toggle between viewing available bandwidth or allocated bandwidth"
+)
+show_allocation = (chart_mode == "Show Allocation %")
+
 # Note about chart display
 st.info("📌 Engineer charts automatically switch to heatmap view when there are more than 15 engineers for better readability.")
 
@@ -2305,17 +2347,17 @@ if not monthly_df.empty and not engineers_df.empty:
     st.divider()
 
 # Tab organization for quarterly views
-quarterly_tab1, quarterly_tab2, quarterly_tab3 = st.tabs(["👥 Engineer Availability", "📊 Quarterly Distribution", "📈 Trends Over Time"])
+quarterly_tab1, quarterly_tab2, quarterly_tab3 = st.tabs(["👥 Engineer Bandwidth", "📊 Quarterly Distribution", "📈 Trends Over Time"])
 
 with quarterly_tab1:
-    st.subheader("Engineer Availability by Quarter")
+    st.subheader(f"Engineer {chart_mode.replace('Show ', '')} by Quarter")
     
-    # Generate quarterly availability chart
-    quarterly_availability_fig = generate_quarterly_availability_chart(monthly_df, engineers_df)
-    if quarterly_availability_fig:
-        st.plotly_chart(quarterly_availability_fig, use_container_width=True)
+    # Generate quarterly availability/allocation chart
+    quarterly_chart_fig = generate_quarterly_availability_chart(monthly_df, engineers_df, show_allocation=show_allocation)
+    if quarterly_chart_fig:
+        st.plotly_chart(quarterly_chart_fig, use_container_width=True)
     else:
-        st.info("No data available for quarterly availability chart.")
+        st.info("No data available for quarterly chart.")
 
 with quarterly_tab2:
     st.subheader("Quarterly Allocation Distribution")
