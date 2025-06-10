@@ -94,7 +94,8 @@ Usage
 
 Start the application
 
-bashstreamlit run resource_allocation_app.py
+nohup streamlit run resource_allocation_app.py   --server.port 8000   --server.enableCORS false   --server.enableXsrfProtection false   --server.enableWebsocketCompression tr
+ue > streamlit.log 2>&1 &
 
 Access the application
 Open your browser and navigate to http://localhost:8501
