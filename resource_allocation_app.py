@@ -1917,7 +1917,7 @@ if not current_monthly_df.empty:
             st.info(f"Showing {len(filtered_df)} Critical/High priority assignments")
     
     # Add view options
-    view_mode = st.radio("View Mode:", ["By Engineer", "By Month", "By Program", "All Assignments"], horizontal=True)
+    view_mode = st.radio("View Mode:", ["By Program", "By Month", "By Engineer", "All Assignments"], horizontal=True)
     
     if view_mode == "By Engineer":
         # Group by engineer for better visualization
