@@ -14,14 +14,12 @@ import os
 st.set_page_config(page_title="MS Perfect Team Planning", layout="wide")
 st.title("MS Perfect Team Planning")
 
-# Check for AgGrid availability
+# Check for AgGrid availability (used for future projects)
 try:
     from st_aggrid import AgGrid, GridOptionsBuilder
     aggrid_available = True
 except ImportError:
     aggrid_available = False
-    st.error("Please install streamlit-aggrid with `pip install streamlit-aggrid` to enable inline editing.")
-    st.info("Displaying read-only data editor instead.")
 
 # ─────────────────────────────────────────────────────────────
 # Helper Functions for Quarterly Calculations
@@ -296,6 +294,7 @@ def default_engineers():
         "Team": ["Team A", "Team B"],
         "Engineer Name": ["Jane Doe", "John Smith"],
         "Role": ["Backend Dev", "Infra Eng"],
+        "Skills": ["Python, AWS, Docker", "Kubernetes, Terraform, AWS"],
         "Weekly Hours": [40, 40],
         "Annual PTO Days": [0, 0],  # Auto-calculated from monthly values
     }
@@ -1065,13 +1064,6 @@ def generate_future_projects_timeline(future_projects_df):
 # 5) Main App Logic
 # ─────────────────────────────────────────────────────────────
 
-# Check for AgGrid availability at the start
-try:
-    from st_aggrid import AgGrid, GridOptionsBuilder
-    aggrid_available = True
-except ImportError:
-    aggrid_available = False
-
 # Initialize all dataframes at the start
 engineer_file = "engineers.csv"
 future_projects_file = "future_projects.csv"
@@ -1101,6 +1093,8 @@ try:
         loaded_df["Notes"] = ""
     if "Role" not in loaded_df.columns:
         loaded_df["Role"] = ""
+    if "Skills" not in loaded_df.columns:
+        loaded_df["Skills"] = ""
     if "Weekly Hours" not in loaded_df.columns:
         loaded_df["Weekly Hours"] = 40
     
@@ -1200,6 +1194,8 @@ if "Notes" not in engineers_df.columns:
     engineers_df["Notes"] = ""
 if "Role" not in engineers_df.columns:
     engineers_df["Role"] = ""
+if "Skills" not in engineers_df.columns:
+    engineers_df["Skills"] = ""
 if "Weekly Hours" not in engineers_df.columns:
     engineers_df["Weekly Hours"] = 40
 
@@ -1233,6 +1229,11 @@ if pto_columns:
     for col in pto_columns:
         engineers_df[col] = pd.to_numeric(engineers_df[col], errors='coerce').fillna(0)
     engineers_df['Annual PTO Days'] = engineers_df[pto_columns].sum(axis=1)
+
+# Ensure Skills column exists
+if "Skills" not in engineers_df.columns:
+    engineers_df["Skills"] = ""
+    pto_columns_added = True  # Mark that we need to save
 
 # Update session state after adding columns
 st.session_state.engineers_df = engineers_df
@@ -1273,6 +1274,10 @@ with col3:
         for col in pto_columns:
             engineers_df[col] = pd.to_numeric(engineers_df[col], errors='coerce').fillna(0)
         
+        # Ensure Skills column exists
+        if "Skills" not in engineers_df.columns:
+            engineers_df["Skills"] = ""
+        
         # Recalculate annual PTO
         engineers_df['Annual PTO Days'] = engineers_df[pto_columns].sum(axis=1)
         
@@ -1292,6 +1297,7 @@ with eng_tab1:
             new_name = st.text_input("Engineer Name", value="")
             new_team = st.text_input("Team", value="Unassigned")
             new_role = st.text_input("Role", value="TBD")
+            new_skills = st.text_input("Skills", value="", placeholder="e.g., Python, AWS, React (comma-separated)")
             new_hours = st.number_input("Weekly Hours", min_value=0, max_value=168, value=40)
             
             if st.form_submit_button("Add Engineer"):
@@ -1301,6 +1307,7 @@ with eng_tab1:
                         "Engineer Name": new_name.strip(),  # Strip whitespace
                         "Team": new_team,
                         "Role": new_role,
+                        "Skills": new_skills,
                         "Weekly Hours": new_hours,
                         "Annual PTO Days": 0,
                         "Notes": ""
@@ -1335,7 +1342,16 @@ with eng_tab1:
     # IMPORTANT: Always get the latest data from session state
     engineers_df = st.session_state.engineers_df.copy()
     
+    # Add editor selection
+    use_aggrid = False
     if aggrid_available:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.write("")  # Empty space
+        with col2:
+            use_aggrid = st.checkbox("Use AgGrid Editor", value=True, help="Toggle between AgGrid and standard editor")
+    
+    if aggrid_available and use_aggrid:
         # Expander to rename engineer columns
         with st.expander("Rename Engineer Columns", expanded=False):
             eng_renames = {}
@@ -1388,7 +1404,7 @@ with eng_tab1:
                 st.success("✅ Engineer data auto-saved!")
     else:
         # FIXED: More robust data editor implementation
-        st.info("ℹ️ Table editing is enabled. Changes are auto-saved. To add/delete engineers, use the controls above.")
+        st.info("ℹ️ Table editing is enabled. Click 'Save Engineer Changes' button below to save your edits.")
         
         column_config = {
             "Annual PTO Days": st.column_config.NumberColumn(
@@ -1400,6 +1416,10 @@ with eng_tab1:
                 "Engineer Name",
                 help="Enter the engineer's name",
                 required=True,
+            ),
+            "Skills": st.column_config.TextColumn(
+                "Skills",
+                help="Enter skills comma-separated (e.g., Python, AWS, React)",
             ),
             "Weekly Hours": st.column_config.NumberColumn(
                 "Weekly Hours",
@@ -1413,6 +1433,10 @@ with eng_tab1:
         # Store full dataframe in session state if not already there
         if 'full_engineers_data' not in st.session_state:
             st.session_state.full_engineers_data = engineers_df.to_dict('records')
+        
+        # Store edited data separately to prevent loss
+        if 'edited_engineers_data' not in st.session_state:
+            st.session_state.edited_engineers_data = None
         
         # Always sync from session state first
         engineers_df = pd.DataFrame(st.session_state.full_engineers_data)
@@ -1432,63 +1456,73 @@ with eng_tab1:
             display_df,
             key="engineers_data_editor",
             column_config=column_config,
-            num_rows="fixed"  # Changed from "dynamic" to prevent data loss
+            num_rows="fixed",  # Changed from "dynamic" to prevent data loss
+            on_change=None  # Disable auto-update
         )
         
-        # Process changes
+        # Store edited data in session state for manual save
         if edited_df is not None:
-            try:
-                # Check if data changed (rows should be same since num_rows="fixed")
-                data_changed = not edited_df.equals(display_df)
-                
-                if data_changed:
-                    # Build complete new dataframe
-                    new_full_data = []
-                    
-                    for idx, row in edited_df.iterrows():
-                        new_row = row.to_dict()
+            st.session_state.edited_engineers_data = edited_df
+        
+        # Add explicit save button for data editor changes
+        col1, col2 = st.columns([1, 5])
+        with col1:
+            if st.button("💾 Apply Edits", key="apply_edits_btn", type="primary"):
+                if st.session_state.edited_engineers_data is not None:
+                    try:
+                        edited_df = st.session_state.edited_engineers_data
                         
-                        # Add PTO columns from existing data
-                        if idx < len(engineers_df):
-                            for pto_col in pto_columns:
-                                new_row[pto_col] = engineers_df.iloc[idx][pto_col]
+                        # Build complete new dataframe
+                        new_full_data = []
                         
-                        # Calculate Annual PTO
-                        annual_pto = sum(new_row.get(col, 0) for col in pto_columns)
-                        new_row['Annual PTO Days'] = annual_pto
+                        for idx, row in edited_df.iterrows():
+                            new_row = row.to_dict()
+                            
+                            # Add PTO columns from existing data
+                            if idx < len(engineers_df):
+                                for pto_col in pto_columns:
+                                    new_row[pto_col] = engineers_df.iloc[idx][pto_col]
+                            
+                            # Calculate Annual PTO
+                            annual_pto = sum(new_row.get(col, 0) for col in pto_columns)
+                            new_row['Annual PTO Days'] = annual_pto
+                            
+                            new_full_data.append(new_row)
                         
-                        new_full_data.append(new_row)
-                    
-                    # Create new dataframe
-                    new_engineers_df = pd.DataFrame(new_full_data)
-                    
-                    # Clean up
-                    new_engineers_df['Engineer Name'] = new_engineers_df['Engineer Name'].fillna('').astype(str).str.strip()
-                    new_engineers_df = new_engineers_df[new_engineers_df['Engineer Name'] != '']
-                    
-                    # Ensure column order
-                    col_order = ['Team', 'Engineer Name', 'Role', 'Weekly Hours', 'Annual PTO Days'] + pto_columns + ['Notes']
-                    existing_cols = [col for col in col_order if col in new_engineers_df.columns]
-                    extra_cols = [col for col in new_engineers_df.columns if col not in col_order]
-                    new_engineers_df = new_engineers_df[existing_cols + extra_cols]
-                    
-                    # Update all state
-                    st.session_state.engineers_df = new_engineers_df
-                    st.session_state.full_engineers_data = new_engineers_df.to_dict('records')
-                    
-                    # Save to CSV
-                    new_engineers_df.to_csv(engineer_file, index=False)
-                    st.success("✅ Engineer data auto-saved!")
-                    
-                    # Update local variable
-                    engineers_df = new_engineers_df
-                    
-            except Exception as e:
-                st.error(f"Error updating data: {str(e)}")
-                st.info("Your changes were not saved. Please try again or use the '➕ Add Engineer Row' button above.")
-                # Restore from session state on error
-                if 'full_engineers_data' in st.session_state:
-                    engineers_df = pd.DataFrame(st.session_state.full_engineers_data)
+                        # Create new dataframe
+                        new_engineers_df = pd.DataFrame(new_full_data)
+                        
+                        # Clean up
+                        new_engineers_df['Engineer Name'] = new_engineers_df['Engineer Name'].fillna('').astype(str).str.strip()
+                        new_engineers_df = new_engineers_df[new_engineers_df['Engineer Name'] != '']
+                        
+                        # Ensure column order
+                        col_order = ['Team', 'Engineer Name', 'Role', 'Skills', 'Weekly Hours', 'Annual PTO Days'] + pto_columns + ['Notes']
+                        existing_cols = [col for col in col_order if col in new_engineers_df.columns]
+                        extra_cols = [col for col in new_engineers_df.columns if col not in col_order]
+                        new_engineers_df = new_engineers_df[existing_cols + extra_cols]
+                        
+                        # Update all state
+                        st.session_state.engineers_df = new_engineers_df
+                        st.session_state.full_engineers_data = new_engineers_df.to_dict('records')
+                        
+                        # Save to CSV
+                        new_engineers_df.to_csv(engineer_file, index=False)
+                        st.success("✅ Engineer data saved!")
+                        
+                        # Clear edited data
+                        st.session_state.edited_engineers_data = None
+                        
+                        # Update local variable
+                        engineers_df = new_engineers_df
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Error updating data: {str(e)}")
+                        st.info("Your changes were not saved. Please try again.")
+        
+        with col2:
+            st.caption("Make your edits in the table above, then click 'Apply Edits' to save changes.")
     
     # Option to delete engineers
     if len(engineers_df) > 0:
@@ -1506,7 +1540,7 @@ with eng_tab1:
                 st.success(f"Deleted engineer: {engineer_to_delete}")
                 st.rerun()
     
-    st.info("ℹ️ Annual PTO Days is automatically calculated as the sum of all monthly PTO values")
+    st.info("ℹ️ Annual PTO Days is automatically calculated as the sum of all monthly PTO values. Add skills for better project matching!")
 
 with eng_tab2:
     st.subheader("Monthly PTO Days Management")
@@ -1605,17 +1639,6 @@ with eng_tab2:
                         st.rerun()
             else:
                 st.error(f"Engineer '{selected_engineer_pto}' not found in the data.")
-
-if st.button("💾 Save Engineer Changes", key="save_eng_btn"):
-    # Get the current engineers_df from session state
-    engineers_df = st.session_state.engineers_df
-    # Ensure Engineer Name is properly formatted before saving - strip whitespace
-    engineers_df['Engineer Name'] = engineers_df['Engineer Name'].fillna('').astype(str).str.strip()
-    # Remove any rows with completely empty names
-    engineers_df = engineers_df[engineers_df['Engineer Name'] != '']
-    st.session_state.engineers_df = engineers_df
-    engineers_df.to_csv(engineer_file, index=False)
-    st.success("✅ Engineer data saved to file!")
 
 # ─────────────────────────────────────────────────────────────
 # NEW SECTION: Monthly Feature Assignments with Edit Functionality
@@ -2112,6 +2135,10 @@ with col2:
             loaded_df['Engineer Name'] = loaded_df['Engineer Name'].fillna('').astype(str).str.strip()
             # Remove completely empty rows
             loaded_df = loaded_df[loaded_df.astype(str).ne('').any(axis=1)]
+            
+            # Ensure Skills column exists
+            if "Skills" not in loaded_df.columns:
+                loaded_df["Skills"] = ""
             
             # Ensure PTO columns exist
             current_date = datetime.now()
@@ -2730,6 +2757,411 @@ with col2:
 with col3:
     high_priority_count = len(future_projects_df[future_projects_df.get('Priority', '') == 'High'])
     st.metric("High Priority Projects", high_priority_count)
+
+# ─────────────────────────────────────────────────────────────
+# Engineer Capacity vs Future Projects Analysis
+# ─────────────────────────────────────────────────────────────
+
+st.header("🔍 Engineer Capacity vs Future Projects Analysis")
+
+# Get current engineers count
+total_engineers = len(engineers_df[engineers_df['Engineer Name'].str.strip() != ''])
+
+# Get future projects data
+if 'future_projects_df' in st.session_state and not st.session_state.future_projects_df.empty:
+    future_df = st.session_state.future_projects_df
+    
+    # Calculate total engineers needed
+    try:
+        total_engineers_needed = future_df['Estimated Engineer Count'].astype(float).sum()
+    except:
+        total_engineers_needed = 0
+    
+    # Create main comparison metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Current Engineers", total_engineers, 
+                 help="Total number of engineers in your team")
+    
+    with col2:
+        st.metric("Engineers Needed", int(total_engineers_needed),
+                 help="Total engineers needed for all future projects")
+    
+    with col3:
+        gap = total_engineers - total_engineers_needed
+        delta_color = "normal" if gap >= 0 else "inverse"
+        st.metric("Capacity Gap", int(gap), 
+                 delta=f"{int(gap)} engineers",
+                 delta_color=delta_color,
+                 help="Positive = surplus, Negative = shortage")
+    
+    with col4:
+        if total_engineers > 0:
+            utilization_ratio = (total_engineers_needed / total_engineers) * 100
+            st.metric("Future Demand %", f"{utilization_ratio:.1f}%",
+                     help="Percentage of current team needed for future projects")
+        else:
+            st.metric("Future Demand %", "N/A")
+    
+    # Detailed timeline analysis
+    st.subheader("📅 Timeline-based Capacity Analysis")
+    
+    # Get available engineers by quarter
+    if not monthly_df.empty:
+        # Calculate availability by quarter
+        availability_summary, availability_details = generate_monthly_utilization_chart(monthly_df, engineers_df)
+        
+        # Get future projects by quarter
+        future_by_quarter = {}
+        
+        # Create project skills map for reference
+        project_skills_map = {}
+        for idx, project in future_df.iterrows():
+            project_name = project.get('Project Name', f'Project {idx}')
+            skills_str = project.get('Required Skills', '')
+            if skills_str:
+                skills = [s.strip().lower() for s in str(skills_str).split(',') if s.strip()]
+                project_skills_map[project_name] = skills
+        
+        for idx, project in future_df.iterrows():
+            try:
+                start_date = pd.to_datetime(project.get('Expected Start Date'))
+                end_date = pd.to_datetime(project.get('Expected End Date'))
+                engineers_needed = float(project.get('Estimated Engineer Count', 0))
+                
+                if pd.notna(start_date) and pd.notna(end_date):
+                    # Determine which quarters this project spans
+                    current_date = start_date
+                    while current_date <= end_date:
+                        quarter = get_fiscal_quarter(current_date.strftime("%Y-%m"))
+                        if quarter not in future_by_quarter:
+                            future_by_quarter[quarter] = {
+                                'projects': [],
+                                'engineers_needed': 0
+                            }
+                        
+                        # Add project info if not already added for this quarter
+                        project_name = project.get('Project Name', 'Unnamed')
+                        if project_name not in [p['name'] for p in future_by_quarter[quarter]['projects']]:
+                            future_by_quarter[quarter]['projects'].append({
+                                'name': project_name,
+                                'engineers': engineers_needed,
+                                'priority': project.get('Priority', 'Medium')
+                            })
+                            future_by_quarter[quarter]['engineers_needed'] += engineers_needed
+                        
+                        # Move to next month
+                        if current_date.month == 12:
+                            current_date = current_date.replace(year=current_date.year + 1, month=1)
+                        else:
+                            current_date = current_date.replace(month=current_date.month + 1)
+            except:
+                continue
+        
+        # Create comparison table
+        if future_by_quarter and not availability_details.empty:
+            comparison_data = []
+            
+            # Get unique quarters from both sources
+            all_quarters = set(future_by_quarter.keys())
+            if not availability_details.empty:
+                all_quarters.update(availability_details['Quarter'].unique())
+            
+            sorted_quarters = sort_quarters_chronologically(list(all_quarters))
+            
+            for quarter in sorted_quarters:
+                # Get available engineers for this quarter
+                quarter_availability = availability_details[availability_details['Quarter'] == quarter]
+                available_engineers = len(quarter_availability[quarter_availability['Available %'] > 20])
+                
+                # Get needed engineers for this quarter
+                needed = future_by_quarter.get(quarter, {}).get('engineers_needed', 0)
+                
+                comparison_data.append({
+                    'Quarter': quarter,
+                    'Available Engineers': available_engineers,
+                    'Engineers Needed': int(needed),
+                    'Gap': available_engineers - needed,
+                    'Status': '✅ Sufficient' if available_engineers >= needed else '⚠️ Shortage'
+                })
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            
+            # Display comparison table
+            st.dataframe(
+                comparison_df.style.applymap(
+                    lambda x: 'background-color: #ffcccc' if x == '⚠️ Shortage' else 'background-color: #ccffcc' if x == '✅ Sufficient' else '',
+                    subset=['Status']
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Visualize capacity vs demand
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                name='Available Engineers',
+                x=comparison_df['Quarter'],
+                y=comparison_df['Available Engineers'],
+                marker_color='lightgreen',
+                text=comparison_df['Available Engineers'],
+                textposition='auto',
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Engineers Needed',
+                x=comparison_df['Quarter'],
+                y=comparison_df['Engineers Needed'],
+                marker_color='lightcoral',
+                text=comparison_df['Engineers Needed'],
+                textposition='auto',
+            ))
+            
+            fig.update_layout(
+                title='Engineer Capacity vs Future Project Demand by Quarter',
+                xaxis_title='Quarter',
+                yaxis_title='Number of Engineers',
+                barmode='group',
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show details of shortage quarters
+            shortage_quarters = comparison_df[comparison_df['Status'] == '⚠️ Shortage']
+            if not shortage_quarters.empty:
+                st.warning(f"⚠️ Engineer shortage detected in {len(shortage_quarters)} quarter(s)")
+                
+                for _, quarter_data in shortage_quarters.iterrows():
+                    quarter = quarter_data['Quarter']
+                    gap = abs(quarter_data['Gap'])
+                    
+                    with st.expander(f"📍 {quarter} - Need {gap} more engineer(s)"):
+                        # Show which projects need engineers
+                        if quarter in future_by_quarter:
+                            st.write("**Projects requiring engineers:**")
+                            for project in future_by_quarter[quarter]['projects']:
+                                priority_icon = {
+                                    'Critical': '🔴',
+                                    'High': '🟠',
+                                    'Medium': '🟡',
+                                    'Low': '🟢'
+                                }.get(project['priority'], '⚪')
+                                st.write(f"- {priority_icon} {project['name']} ({project['engineers']} engineers)")
+                                # Show required skills for this project
+                                if project['name'] in project_skills_map:
+                                    skills_needed = project_skills_map[project['name']]
+                                    if skills_needed:
+                                        skills_str = ', '.join([s.title() for s in skills_needed[:5]])
+                                        if len(skills_needed) > 5:
+                                            skills_str += '...'
+                                        st.caption(f"  Skills needed: {skills_str}")
+                        
+                        # Show available engineers
+                        st.write("\n**Currently available engineers:**")
+                        quarter_avail = availability_details[availability_details['Quarter'] == quarter]
+                        available_eng = quarter_avail[quarter_avail['Available %'] > 20].sort_values('Available %', ascending=False)
+                        
+                        if not available_eng.empty:
+                            for _, eng in available_eng.iterrows():
+                                engineer_name = eng['Engineer']
+                                # Get engineer skills if available
+                                if 'Skills' in engineers_df.columns:
+                                    engineer_match = engineers_df[engineers_df['Engineer Name'] == engineer_name]
+                                    if not engineer_match.empty:
+                                        skills = engineer_match.iloc[0]['Skills']
+                                        if skills and str(skills).strip():
+                                            st.write(f"- {engineer_name} ({eng['Available %']:.1f}% available)")
+                                            st.caption(f"  Skills: {skills}")
+                                        else:
+                                            st.write(f"- {engineer_name} ({eng['Available %']:.1f}% available)")
+                                    else:
+                                        st.write(f"- {engineer_name} ({eng['Available %']:.1f}% available)")
+                                else:
+                                    st.write(f"- {engineer_name} ({eng['Available %']:.1f}% available)")
+                        else:
+                            st.write("No engineers with >20% availability")
+    else:
+        st.info("No availability data. Add monthly assignments to see detailed capacity analysis.")
+    
+    # Skills matching section
+    st.subheader("🎯 Skills Matching Analysis")
+    
+    # Extract required skills from future projects
+    all_required_skills = []
+    project_skills_map = {}
+    
+    for idx, project in future_df.iterrows():
+        project_name = project.get('Project Name', f'Project {idx}')
+        skills_str = project.get('Required Skills', '')
+        if skills_str:
+            skills = [s.strip().lower() for s in str(skills_str).split(',') if s.strip()]
+            all_required_skills.extend(skills)
+            project_skills_map[project_name] = skills
+    
+    if all_required_skills:
+        # Count required skills
+        skill_counts = pd.Series(all_required_skills).value_counts()
+        
+        # Extract engineer skills
+        engineer_skills_map = {}
+        all_engineer_skills = []
+        
+        if 'Skills' in engineers_df.columns:
+            for idx, engineer in engineers_df.iterrows():
+                engineer_name = engineer.get('Engineer Name', '')
+                skills_str = engineer.get('Skills', '')
+                if engineer_name and skills_str:
+                    skills = [s.strip().lower() for s in str(skills_str).split(',') if s.strip()]
+                    engineer_skills_map[engineer_name] = skills
+                    all_engineer_skills.extend(skills)
+        
+        # Create three columns for comprehensive analysis
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.write("**Most Needed Skills (Future Projects):**")
+            for skill, count in skill_counts.head(10).items():
+                # Check how many engineers have this skill
+                engineers_with_skill = sum(1 for eng_skills in engineer_skills_map.values() if skill in eng_skills)
+                if engineers_with_skill > 0:
+                    st.write(f"- {skill.title()}: {count} project(s) | ✅ {engineers_with_skill} engineer(s)")
+                else:
+                    st.write(f"- {skill.title()}: {count} project(s) | ❌ No engineers")
+        
+        with col2:
+            st.write("**Skill Coverage Analysis:**")
+            
+            # Calculate coverage metrics
+            unique_required_skills = set(all_required_skills)
+            unique_engineer_skills = set(all_engineer_skills)
+            
+            covered_skills = unique_required_skills.intersection(unique_engineer_skills)
+            missing_skills = unique_required_skills - unique_engineer_skills
+            
+            coverage_percentage = (len(covered_skills) / len(unique_required_skills) * 100) if unique_required_skills else 0
+            
+            st.metric("Skill Coverage", f"{coverage_percentage:.1f}%")
+            st.metric("Skills Covered", f"{len(covered_skills)}/{len(unique_required_skills)}")
+            
+            if missing_skills:
+                st.write("**⚠️ Missing Skills:**")
+                for skill in sorted(missing_skills)[:5]:  # Show top 5 missing skills
+                    projects_needing = sum(1 for proj_skills in project_skills_map.values() if skill in proj_skills)
+                    st.write(f"- {skill.title()} (needed by {projects_needing} project(s))")
+        
+        with col3:
+            st.write("**Engineers by Skill Match:**")
+            
+            # Calculate match scores for each engineer
+            engineer_matches = []
+            
+            for engineer_name, engineer_skills in engineer_skills_map.items():
+                if engineer_skills:
+                    matching_skills = set(engineer_skills).intersection(unique_required_skills)
+                    match_score = len(matching_skills)
+                    
+                    if match_score > 0:
+                        engineer_matches.append({
+                            'name': engineer_name,
+                            'score': match_score,
+                            'skills': matching_skills
+                        })
+            
+            # Sort by match score
+            engineer_matches.sort(key=lambda x: x['score'], reverse=True)
+            
+            # Display top matches
+            if engineer_matches:
+                for match in engineer_matches[:5]:
+                    skills_preview = ', '.join(sorted(match['skills'])[:3])
+                    if len(match['skills']) > 3:
+                        skills_preview += '...'
+                    st.write(f"- {match['name']}: {match['score']} matching skill(s)")
+                    st.caption(f"  Skills: {skills_preview}")
+            else:
+                st.write("No engineers with matching skills found")
+        
+        # Detailed skill matrix
+        with st.expander("📊 Detailed Skill Matrix"):
+            if engineer_skills_map and project_skills_map:
+                # Create a matrix showing which engineers can work on which projects
+                matrix_data = []
+                
+                for project_name, required_skills in project_skills_map.items():
+                    row = {'Project': project_name}
+                    
+                    for engineer_name, engineer_skills in engineer_skills_map.items():
+                        # Calculate skill match percentage
+                        if required_skills and engineer_skills:
+                            matching_skills = set(engineer_skills).intersection(set(required_skills))
+                            match_percentage = (len(matching_skills) / len(required_skills)) * 100
+                            row[engineer_name] = f"{match_percentage:.0f}%"
+                        else:
+                            row[engineer_name] = "0%"
+                    
+                    matrix_data.append(row)
+                
+                matrix_df = pd.DataFrame(matrix_data)
+                
+                # Apply color coding
+                def color_match(val):
+                    try:
+                        percentage = float(val.strip('%'))
+                        if percentage >= 80:
+                            return 'background-color: #90EE90'  # Light green
+                        elif percentage >= 50:
+                            return 'background-color: #FFFFE0'  # Light yellow
+                        elif percentage > 0:
+                            return 'background-color: #FFE4B5'  # Light orange
+                        else:
+                            return 'background-color: #FFB6C1'  # Light red
+                    except:
+                        return ''
+                
+                # Style all columns except 'Project'
+                styled_matrix = matrix_df.style.applymap(
+                    color_match, 
+                    subset=[col for col in matrix_df.columns if col != 'Project']
+                )
+                
+                st.dataframe(styled_matrix, use_container_width=True)
+                
+                st.caption("""
+                **Color Legend:**
+                - 🟢 Green: 80-100% skill match
+                - 🟡 Yellow: 50-79% skill match
+                - 🟠 Orange: 1-49% skill match
+                - 🔴 Red: 0% skill match
+                """)
+            else:
+                st.info("Add skills to engineers to see the detailed skill matrix")
+        
+        st.info("💡 Tip: Add skills to both engineers and future projects in the format 'Python, AWS, React' (comma-separated)")
+    else:
+        st.info("No required skills found in future projects. Add skills to projects and engineers to see analysis.")
+    
+    # Also show engineers without skills listed
+    if 'Skills' in engineers_df.columns:
+        engineers_without_skills = engineers_df[
+            (engineers_df['Skills'].isna()) | 
+            (engineers_df['Skills'].str.strip() == '')
+        ]['Engineer Name'].tolist()
+        
+        if engineers_without_skills:
+            with st.expander(f"⚠️ Engineers without skills listed ({len(engineers_without_skills)})"):
+                for eng in engineers_without_skills:
+                    st.write(f"- {eng}")
+                st.caption("Consider adding skills for these engineers for better project matching")
+    
+else:
+    st.info("Add future projects to see capacity analysis")
+
+# ─────────────────────────────────────────────────────────────
+# Export and Visualization Section
+# ─────────────────────────────────────────────────────────────
 
 st.header("📈 Export and Visualization")
 
