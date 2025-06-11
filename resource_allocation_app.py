@@ -152,7 +152,8 @@ def generate_team_utilization_summary(monthly_df, engineers_df):
                 
                 if has_assignment:
                     engineer_allocation += month_allocation
-                    engineer_effective_allocation += month_allocation * working_days_ratio
+                    # FIXED: Don't adjust allocation for PTO - it stays the same
+                    engineer_effective_allocation += month_allocation
             
             # Calculate quarterly metrics based on months with assignments
             if months_with_assignments > 0:
@@ -961,14 +962,44 @@ def generate_future_projects_timeline(future_projects_df):
     
     # Prepare data for timeline
     timeline_data = []
+    skipped_projects = []
     
-    for _, row in future_projects_df.iterrows():
+    for idx, row in future_projects_df.iterrows():
         try:
-            project_name = row.get('Project Name', 'Unnamed Project')
-            start_date = pd.to_datetime(row.get('Expected Start Date', '2025-07-01'))
-            end_date = pd.to_datetime(row.get('Expected End Date', '2025-08-01'))
-            priority = row.get('Priority', 'Medium')
-            status = row.get('Status', 'Planning')
+            project_name = row.get('Project Name', f'Unnamed Project {idx+1}')
+            
+            # Handle dates more gracefully
+            try:
+                start_date = pd.to_datetime(row.get('Expected Start Date'))
+                if pd.isna(start_date):
+                    raise ValueError("Invalid start date")
+            except:
+                # Use a default start date if parsing fails
+                start_date = pd.to_datetime(datetime.now().strftime('%Y-%m-01'))
+                skipped_projects.append(f"{project_name}: Invalid/missing start date, using {start_date.strftime('%Y-%m-%d')}")
+            
+            try:
+                end_date = pd.to_datetime(row.get('Expected End Date'))
+                if pd.isna(end_date):
+                    raise ValueError("Invalid end date")
+            except:
+                # Use start date + 30 days as default end date
+                end_date = start_date + timedelta(days=30)
+                skipped_projects.append(f"{project_name}: Invalid/missing end date, using {end_date.strftime('%Y-%m-%d')}")
+            
+            # Ensure end date is after start date
+            if end_date <= start_date:
+                end_date = start_date + timedelta(days=1)
+                skipped_projects.append(f"{project_name}: End date before start date, adjusted to {end_date.strftime('%Y-%m-%d')}")
+            
+            priority = str(row.get('Priority', 'Medium'))
+            status = str(row.get('Status', 'Planning'))
+            
+            # Get engineer count, default to 1 if invalid
+            try:
+                engineers = int(float(row.get('Estimated Engineer Count', 1)))
+            except:
+                engineers = 1
             
             timeline_data.append({
                 'Project': project_name,
@@ -976,19 +1007,31 @@ def generate_future_projects_timeline(future_projects_df):
                 'Finish': end_date,
                 'Priority': priority,
                 'Status': status,
-                'Engineers': row.get('Estimated Engineer Count', 1)
+                'Engineers': engineers,
+                'Duration': (end_date - start_date).days
             })
-        except:
+            
+        except Exception as e:
+            # This should rarely happen now with better error handling above
+            project_name = row.get('Project Name', f'Unnamed Project {idx+1}')
+            skipped_projects.append(f"{project_name}: Unexpected error - {str(e)}")
             continue
     
     if not timeline_data:
+        st.error("No valid projects could be displayed in the timeline. Please check your project data.")
         return None
     
     timeline_df = pd.DataFrame(timeline_data)
     
+    # Sort by start date
+    timeline_df = timeline_df.sort_values('Start')
+    
     # Create color mapping for priority
-    color_map = {'High': '#FF6B6B', 'Medium': '#4ECDC4', 'Low': '#45B7D1', 'Planning': '#96CEB4'}
-    timeline_df['Color'] = timeline_df['Priority'].map(color_map).fillna('#95A5A6')
+    color_map = {'High': '#FF6B6B', 'Medium': '#4ECDC4', 'Low': '#45B7D1', 'Critical': '#FF0000'}
+    # Handle any priority values not in the map
+    for priority in timeline_df['Priority'].unique():
+        if priority not in color_map:
+            color_map[priority] = '#95A5A6'  # Default gray color
     
     fig = px.timeline(
         timeline_df,
@@ -997,12 +1040,24 @@ def generate_future_projects_timeline(future_projects_df):
         y="Project",
         color="Priority",
         color_discrete_map=color_map,
-        title="Future Projects Timeline",
-        hover_data=['Status', 'Engineers']
+        title=f"Future Projects Timeline ({len(timeline_df)} projects displayed)",
+        hover_data=['Status', 'Engineers', 'Duration'],
+        labels={'Duration': 'Duration (days)'}
     )
     
+    # Update layout for better readability
     fig.update_yaxes(categoryorder="total ascending")
-    fig.update_layout(height=400)
+    
+    # Dynamic height based on number of projects
+    height = max(400, 40 * len(timeline_df))  # 40px per project, minimum 400px
+    fig.update_layout(
+        height=min(height, 1200),  # Cap at 1200px
+        showlegend=True,
+        margin=dict(l=200)  # More space for project names
+    )
+    
+    # Show summary below the chart
+    st.write(f"**Timeline Summary:** Showing {len(timeline_df)} of {len(future_projects_df)} total projects")
     
     return fig
 
