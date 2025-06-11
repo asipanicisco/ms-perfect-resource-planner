@@ -1349,7 +1349,7 @@ with eng_tab1:
         with col1:
             st.write("")  # Empty space
         with col2:
-            use_aggrid = st.checkbox("Use AgGrid Editor", value=True, help="Toggle between AgGrid and standard editor")
+            use_aggrid = st.checkbox("Use AgGrid Editor", value=False, help="Toggle between AgGrid and standard editor")
     
     if aggrid_available and use_aggrid:
         # Expander to rename engineer columns
